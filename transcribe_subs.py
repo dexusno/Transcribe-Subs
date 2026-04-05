@@ -894,21 +894,6 @@ def _remove_hallucinations(entries: List[dict]) -> List[dict]:
                 log.debug("  Hallucination (speed %.1f w/s): %s",
                           words_per_sec, text[:50])
 
-        # 3. Isolation check — short phrase with big gaps before and after
-        #    Whisper hallucinates generic phrases during silence/music
-        if not is_hallucination and word_count <= 6:
-            gap_before = e["start_sec"] - entries[i - 1]["end_sec"] if i > 0 else 999
-            gap_after = entries[i + 1]["start_sec"] - e["end_sec"] if i + 1 < len(entries) else 999
-
-            # Isolated: big silence on BOTH sides of a short phrase
-            # means it appeared in the middle of nothing — very likely hallucinated.
-            # Only trigger if both gaps are large to avoid killing real dialogue
-            # after scene changes.
-            if gap_before > 15 and gap_after > 15:
-                is_hallucination = True
-                log.debug("  Hallucination (isolated, gaps %.1f/%.1fs): %s",
-                          gap_before, gap_after, text[:50])
-
         if is_hallucination:
             continue
 
