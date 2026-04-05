@@ -1356,13 +1356,9 @@ def _transcribe_one(
         srt_text = _entries_to_srt(entries)
         output_path.write_text(srt_text, encoding="utf-8")
 
-        # Clean up raw cache — polished .srt is the final output
-        try:
-            if raw_srt_path.exists():
-                raw_srt_path.unlink()
-                log.debug("  Cleaned up %s", raw_srt_path.name)
-        except OSError:
-            pass
+        # Keep .whisper cache file for now — useful for comparing
+        # raw Whisper output vs LLM-cleaned output during testing.
+        # TODO: delete .whisper after beta testing is complete
 
         elapsed = time.time() - t0
         log.info("  [OK] %s (%d entries, %.1fs, lang=%s)",
