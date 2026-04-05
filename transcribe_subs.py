@@ -547,8 +547,14 @@ def _llm_cleanup_batched(
         # Retry once on failure (timeout, server error, etc.)
         max_retries = 2
         batch_success = False
+        batch_num = (i // max(1, batch_size)) + 1
+        total_batches = math.ceil(total / max(1, batch_size))
         for attempt in range(1, max_retries + 1):
             try:
+                log.info("  Sending batch %d/%d (%d entries) to LLM — waiting for response ...",
+                         batch_num, total_batches, len(batch_entries))
+                t_batch = time.time()
+
                 resp = requests.post(
                     api_url,
                     headers=headers,
@@ -557,6 +563,9 @@ def _llm_cleanup_batched(
                 )
                 resp.raise_for_status()
                 data = resp.json()
+
+                log.info("  Batch %d/%d completed in %.1fs",
+                         batch_num, total_batches, time.time() - t_batch)
 
                 # Accumulate usage
                 usage = data.get("usage", {})
