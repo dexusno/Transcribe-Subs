@@ -900,16 +900,18 @@ def _transcribe_video(
                 vad_filter=vad_filter,
                 language=lang,
             )
-            # Iterate segments as they're generated, logging progress
+            # Iterate segments as they're generated, logging progress.
+            # Whisper streams segments — total is unknown until done.
+            # Show timestamp position so user sees how far through the audio we are.
             segment_list = []
             last_log = 0
             for seg in segments:
                 segment_list.append(seg)
-                # Log progress every 100 segments
                 if len(segment_list) - last_log >= 100:
+                    pos = _seconds_to_srt_time(seg.end).rsplit(",", 1)[0]  # HH:MM:SS
                     elapsed_so_far = time.time() - t0
-                    log.info("  Whisper progress: %d segments (%.0fs) ...",
-                             len(segment_list), elapsed_so_far)
+                    log.info("  Whisper: %d segments, at %s (%.0fs elapsed)",
+                             len(segment_list), pos, elapsed_so_far)
                     last_log = len(segment_list)
 
         elapsed = time.time() - t0
