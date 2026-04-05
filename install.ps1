@@ -426,58 +426,82 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-OK "Python packages installed"
 
-# --- Verify CUDA actually works end-to-end ---
-# This is the REAL test. No version number guessing — we ask CTranslate2
-# to actually use CUDA. If the driver is too old, CUDA libs are missing,
-# or anything else is wrong, this will catch it.
+# --- Verify CUDA actually works end-to-end, and FIX it if not ---
+#
+# Strategy: Don't just test and report errors. Discover what's needed,
+# discover what's installed, and automatically fix the gap:
+#   1. Test: does CTranslate2 see CUDA?
+#   2. If not: discover what CUDA version CTranslate2 requires
+#   3. Discover what CUDA version the driver supports
+#   4. If driver is too old → install latest drivers (always forward-compatible)
+#   5. If CUDA runtime libs missing → install via pip (exact version CT2 needs)
+#   6. Re-test after each fix attempt
+#
 if ($script:GpuMode -eq "cuda") {
-    Write-Info "Verifying CUDA works end-to-end in CTranslate2 ..."
+    Write-Info "Verifying CUDA works end-to-end ..."
 
-    # This script:
-    # 1. Asks CTranslate2 to actually use CUDA (the real test)
-    # 2. If it fails, discovers what CUDA version ctranslate2 was built
-    #    against and what the installed driver supports, so we can show
-    #    the user a meaningful message with no hardcoded versions.
+    # Python script that:
+    # - Tests CUDA
+    # - On failure: discovers CT2's required CUDA version and driver's supported version
+    # - Reports everything the installer needs to fix the problem
     $cudaCheckScript = @"
-import sys
-try:
-    import ctranslate2
+import sys, re
 
-    # --- Discover versions (informational, for error messages) ---
-    ct2_version = getattr(ctranslate2, '__version__', 'unknown')
-    cuda_build = 'unknown'
+def get_driver_cuda_version():
+    """Discover max CUDA version supported by the installed NVIDIA driver."""
     try:
-        # ctranslate2 exposes what CUDA it was compiled for
-        cuda_build = getattr(ctranslate2, 'cuda_version', None)
-        if cuda_build is None:
-            # Some versions expose it differently
-            import importlib.metadata
-            meta = importlib.metadata.metadata('ctranslate2')
-            for line in (meta.get_all('Requires-Dist') or []):
-                if 'nvidia' in line.lower() and 'cu' in line.lower():
-                    cuda_build = line
-                    break
+        import subprocess
+        out = subprocess.run(['nvidia-smi'], capture_output=True, text=True, timeout=10)
+        m = re.search(r'CUDA Version:\s+([\d.]+)', out.stdout)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+def get_required_cuda_version():
+    """Discover what CUDA version CTranslate2 was built against."""
+    try:
+        import importlib.metadata
+        deps = importlib.metadata.requires('ctranslate2') or []
+        for dep in deps:
+            # Look for nvidia-cublas-cuXX or similar
+            m = re.search(r'nvidia-\w+-cu(\d+)', dep)
+            if m:
+                major = int(m.group(1))
+                return f'{major}.0'
+        # Fallback: check the actual loaded CUDA if available
+        import ctranslate2
+        cv = getattr(ctranslate2, 'cuda_version', None)
+        if cv:
+            return str(cv)
     except Exception:
         pass
+    return None
 
-    # --- The actual test: can CTranslate2 use CUDA? ---
+try:
+    import ctranslate2
+    ct2_ver = getattr(ctranslate2, '__version__', 'unknown')
+
+    # The real test
     supported = ctranslate2.get_supported_compute_types('cuda')
     if supported:
-        print(f'CUDA_OK:supported={",".join(sorted(supported))}')
+        print(f'CUDA_OK|ct2={ct2_ver}|types={",".join(sorted(supported))}')
     else:
-        print(f'CUDA_NONE:ct2={ct2_version},cuda_build={cuda_build}')
+        req = get_required_cuda_version() or 'unknown'
+        drv = get_driver_cuda_version() or 'unknown'
+        print(f'CUDA_FAIL|ct2={ct2_ver}|requires={req}|driver_cuda={drv}|reason=no_compute_types')
 
 except RuntimeError as e:
-    # RuntimeError = driver too old, CUDA unavailable, etc.
-    # Include discovered info so the installer can show a helpful message
     try:
         import ctranslate2
-        ct2_ver = getattr(ctranslate2, '__version__', '?')
+        ct2_ver = getattr(ctranslate2, '__version__', 'unknown')
     except Exception:
-        ct2_ver = '?'
-    print(f'CUDA_RUNTIME_ERROR:ct2={ct2_ver}|{e}')
+        ct2_ver = 'unknown'
+    req = get_required_cuda_version() or 'unknown'
+    drv = get_driver_cuda_version() or 'unknown'
+    print(f'CUDA_FAIL|ct2={ct2_ver}|requires={req}|driver_cuda={drv}|reason={e}')
+
 except Exception as e:
-    print(f'CUDA_ERROR:{e}')
+    print(f'CUDA_FAIL|ct2=unknown|requires=unknown|driver_cuda=unknown|reason={e}')
 "@
 
     $cudaResult = & $PythonExe -c $cudaCheckScript 2>&1
@@ -485,92 +509,124 @@ except Exception as e:
 
     if ($cudaResultStr -match "CUDA_OK") {
         Write-OK "CUDA verified — GPU acceleration is working"
-        # Extract supported types for info
-        if ($cudaResultStr -match "supported=(.+)$") {
+        if ($cudaResultStr -match "types=(.+)$") {
             Write-Info "Supported compute types: $($Matches[1])"
         }
-    } elseif ($cudaResultStr -match "CUDA_RUNTIME_ERROR:(.+)") {
-        $errorDetail = $Matches[1].Trim()
 
-        # Parse out CTranslate2 version from the error for display
-        $ct2Ver = ""
-        if ($errorDetail -match "ct2=([^|]+)\|(.+)") {
-            $ct2Ver = $Matches[1].Trim()
-            $errorMsg = $Matches[2].Trim()
-        } else {
-            $errorMsg = $errorDetail
+    } elseif ($cudaResultStr -match "CUDA_FAIL") {
+        # --- Parse discovered versions ---
+        $ct2Ver = ""; $reqCuda = ""; $drvCuda = ""; $reason = ""
+        if ($cudaResultStr -match "ct2=([^|]+)")       { $ct2Ver = $Matches[1] }
+        if ($cudaResultStr -match "requires=([^|]+)")   { $reqCuda = $Matches[1] }
+        if ($cudaResultStr -match "driver_cuda=([^|]+)"){ $drvCuda = $Matches[1] }
+        if ($cudaResultStr -match "reason=(.+)$")       { $reason  = $Matches[1] }
+
+        Write-Warn "CUDA is not working yet"
+        Write-Info "CTranslate2 $ct2Ver requires CUDA $reqCuda"
+        Write-Info "Your driver supports CUDA $drvCuda"
+
+        # --- Determine what to fix ---
+        $driverTooOld = $false
+        $cudaLibsMissing = $false
+
+        # Compare discovered versions to decide the fix
+        if ($reqCuda -ne "unknown" -and $drvCuda -ne "unknown") {
+            try {
+                $reqMajor = [int]($reqCuda -split '\.')[0]
+                $drvMajor = [int]($drvCuda -split '\.')[0]
+                if ($drvMajor -lt $reqMajor) {
+                    $driverTooOld = $true
+                }
+            } catch {
+                # Can't compare — check error message instead
+            }
         }
 
-        Write-Warn "CUDA not available: $errorMsg"
-        if ($ct2Ver) {
-            Write-Info "CTranslate2 version: $ct2Ver"
+        # Also check the error message for clues
+        if ($reason -match "driver|insufficient|not compatible|not supported|CUDA driver") {
+            $driverTooOld = $true
         }
-        if ($DriverVersion) {
-            Write-Info "Installed driver: $DriverVersion"
-        }
-        Write-Info ""
 
-        # Detect common failure reasons from the error message
-        if ($errorMsg -match "driver|CUDA driver|insufficient|not compatible|not supported") {
-            Write-Warn "Your NVIDIA driver may be too old for the installed CUDA libraries."
-            Write-Info "Update your drivers: https://www.nvidia.com/Download/index.aspx"
+        if (-not $driverTooOld) {
+            # Driver version is fine, so the issue is missing CUDA runtime libs
+            $cudaLibsMissing = $true
+        }
+
+        # --- Fix 1: Driver too old ---
+        if ($driverTooOld) {
             Write-Info ""
-            if (Ask-YesNo "Would you like to update NVIDIA drivers now via winget?" $true) {
-                $installed = Install-WithWinget "Nvidia.GeForceExperience" "NVIDIA GeForce Experience (includes drivers)"
-                if ($installed) {
-                    Write-Warn "Drivers updated — a restart may be needed"
-                    Write-Info "Re-run this installer after restarting to verify CUDA"
-                    $script:NeedsRestart = $true
-                }
-            }
-            $script:GpuMode = "cpu"
-        } else {
-            # Generic CUDA failure — try installing runtime libs
-            if (Ask-YesNo "Would you like to try installing CUDA runtime libraries via conda?" $true) {
-                Write-Info "Installing CUDA toolkit (this may take a few minutes) ..."
-                & cmd /c "call `"$CondaActivate`" && conda activate $EnvName && conda install -c nvidia cuda-toolkit -y" 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    $recheck = & $PythonExe -c $cudaCheckScript 2>&1
-                    $recheckStr = ($recheck | Out-String).Trim()
-                    if ($recheckStr -match "CUDA_OK") {
-                        Write-OK "CUDA now working after toolkit install"
-                    } else {
-                        Write-Warn "CUDA still not available — falling back to CPU"
-                        $script:GpuMode = "cpu"
-                    }
-                } else {
-                    Write-Warn "Toolkit install failed — falling back to CPU"
-                    $script:GpuMode = "cpu"
-                }
-            } else {
-                $script:GpuMode = "cpu"
-            }
-        }
-    } elseif ($cudaResultStr -match "CUDA_NONE") {
-        Write-Warn "CTranslate2 reports no CUDA compute types available"
-        if ($cudaResultStr -match "ct2=([^,]+)") {
-            Write-Info "CTranslate2 version: $($Matches[1])"
-        }
-        Write-Info "This may mean the installed package doesn't include CUDA support."
-        Write-Info ""
+            Write-Warn "Your NVIDIA driver (CUDA $drvCuda) is too old for CTranslate2 (needs CUDA $reqCuda)"
+            Write-Info "Installing the latest NVIDIA driver will fix this — newer drivers are always backward compatible."
 
-        if (Ask-YesNo "Would you like to try installing CUDA runtime libraries via conda?" $true) {
-            Write-Info "Installing CUDA toolkit ..."
-            & cmd /c "call `"$CondaActivate`" && conda activate $EnvName && conda install -c nvidia cuda-toolkit -y" 2>&1
-            $recheck = & $PythonExe -c $cudaCheckScript 2>&1
-            $recheckStr = ($recheck | Out-String).Trim()
-            if ($recheckStr -match "CUDA_OK") {
-                Write-OK "CUDA now working"
+            if (Ask-YesNo "Install latest NVIDIA drivers now?" $true) {
+                $installed = Install-WithWinget "Nvidia.GeForceExperience" "NVIDIA GeForce Experience (latest drivers)"
+                if ($installed) {
+                    Write-OK "Latest drivers installed"
+                    Write-Warn "A restart is required for the new driver to take effect."
+                    Write-Info "After restarting, run this installer again — CUDA should work."
+                    $script:NeedsRestart = $true
+                } else {
+                    Write-Warn "Automatic install failed"
+                    Write-Info "Download latest drivers manually: https://www.nvidia.com/Download/index.aspx"
+                    Write-Info "After install + restart, run this installer again."
+                }
+                $script:GpuMode = "cpu"
             } else {
-                Write-Warn "CUDA still not available — falling back to CPU"
+                Write-Info "You can update drivers later and re-run the installer."
                 $script:GpuMode = "cpu"
             }
-        } else {
-            $script:GpuMode = "cpu"
         }
+
+        # --- Fix 2: CUDA runtime libraries missing ---
+        if ($cudaLibsMissing) {
+            Write-Info ""
+            Write-Info "Driver is sufficient — installing CUDA runtime libraries ..."
+
+            # Determine the right pip package to install based on discovered requirement
+            $pipCudaPackages = ""
+            if ($reqCuda -match "^(\d+)") {
+                $cuMajor = $Matches[1]
+                $pipCudaPackages = "nvidia-cublas-cu$cuMajor nvidia-cudnn-cu$cuMajor"
+                Write-Info "Installing CUDA $cuMajor runtime packages via pip ..."
+            }
+
+            # Strategy: try pip packages first (faster, targeted), then conda toolkit as fallback
+            $fixed = $false
+
+            if ($pipCudaPackages) {
+                $PipPath = Join-Path $EnvDir "Scripts\pip.exe"
+                & $PipPath install $pipCudaPackages.Split(" ") --quiet 2>&1
+                # Re-test
+                $recheck = & $PythonExe -c $cudaCheckScript 2>&1
+                $recheckStr = ($recheck | Out-String).Trim()
+                if ($recheckStr -match "CUDA_OK") {
+                    Write-OK "CUDA working after installing runtime libraries"
+                    $fixed = $true
+                }
+            }
+
+            if (-not $fixed) {
+                Write-Info "Trying conda cuda-toolkit as fallback ..."
+                & cmd /c "call `"$CondaActivate`" && conda activate $EnvName && conda install -c nvidia cuda-toolkit -y" 2>&1
+                $recheck = & $PythonExe -c $cudaCheckScript 2>&1
+                $recheckStr = ($recheck | Out-String).Trim()
+                if ($recheckStr -match "CUDA_OK") {
+                    Write-OK "CUDA working after conda toolkit install"
+                    $fixed = $true
+                }
+            }
+
+            if (-not $fixed) {
+                Write-Warn "Could not get CUDA working — falling back to CPU"
+                Write-Info "Whisper will still work, just slower."
+                $script:GpuMode = "cpu"
+            }
+        }
+
     } else {
-        Write-Warn "Could not verify CUDA: $cudaResultStr"
-        Write-Info "Whisper will attempt GPU on first run and fall back to CPU if needed"
+        Write-Warn "Unexpected CUDA check result — falling back to CPU"
+        Write-Info "Whisper will still work on CPU. Re-run installer to retry GPU setup."
+        $script:GpuMode = "cpu"
     }
 }
 
