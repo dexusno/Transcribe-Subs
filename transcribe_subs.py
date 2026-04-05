@@ -253,10 +253,20 @@ def _build_raw_srt(segments) -> str:
     if not all_words:
         return ""
 
-    # Build subtitle entries from words, splitting at natural points
+    # Build subtitle entries from words, splitting at natural points.
+    #
+    # Priority (highest to lowest):
+    # 1. Always split at long pauses (>= 0.7s) — likely speaker change
+    # 2. Prefer splitting at sentence endings (. ! ?) with any pause
+    # 3. Split at comma/semicolon boundaries when near max duration
+    # 4. Hard split at max duration/chars as last resort
+    # 5. Never create entries shorter than MIN_CHARS unless forced by pause
+
     MAX_DURATION = 5.0    # Max seconds per subtitle entry
     MAX_CHARS = 84        # Max characters per entry (42 x 2 lines)
-    PAUSE_THRESHOLD = 0.7 # Seconds of silence = forced split
+    MIN_CHARS = 10        # Don't create tiny fragments below this
+    PAUSE_SPLIT = 0.7     # Seconds of silence = forced split (speaker change)
+    SENTENCE_PAUSE = 0.15 # Shorter pause is enough after sentence-ending punctuation
 
     entries = []
     current_words = []
@@ -266,33 +276,41 @@ def _build_raw_srt(segments) -> str:
         current_words.append(word)
         current_text = "".join(w["word"] for w in current_words).strip()
         current_duration = word["end"] - current_start
+        is_last = (i == len(all_words) - 1)
 
-        # Check if we should split here
+        # Gap to next word (0 if last)
+        gap = all_words[i + 1]["start"] - word["end"] if not is_last else 0
+
+        # Determine if we should split here
         should_split = False
 
-        # 1. Max duration reached
-        if current_duration >= MAX_DURATION:
+        # 1. Long pause — almost certainly a speaker change or scene break
+        if gap >= PAUSE_SPLIT:
             should_split = True
 
-        # 2. Max characters reached
+        # 2. Sentence-ending punctuation with even a small pause
+        if gap >= SENTENCE_PAUSE and current_text and current_text[-1] in ".!?":
+            should_split = True
+
+        # 3. Near max duration — split at comma/clause boundary
+        if current_duration >= MAX_DURATION * 0.8 and current_text:
+            if current_text[-1] in ".,;:—–-" and gap >= 0.1:
+                should_split = True
+
+        # 4. Hard limits — must split regardless
+        if current_duration >= MAX_DURATION:
+            should_split = True
         if len(current_text) >= MAX_CHARS:
             should_split = True
 
-        # 3. Pause before next word (speaker change or natural break)
-        if i + 1 < len(all_words):
-            gap = all_words[i + 1]["start"] - word["end"]
-            if gap >= PAUSE_THRESHOLD:
-                should_split = True
-
-        # 4. End of sentence punctuation + pause
-        if i + 1 < len(all_words):
-            gap = all_words[i + 1]["start"] - word["end"]
-            if gap >= 0.3 and current_text and current_text[-1] in ".!?":
-                should_split = True
-
         # 5. Last word
-        if i == len(all_words) - 1:
+        if is_last:
             should_split = True
+
+        # Anti-fragment: don't split if it would create a tiny entry,
+        # UNLESS forced by a long pause (speaker change)
+        if should_split and len(current_text) < MIN_CHARS and gap < PAUSE_SPLIT and not is_last:
+            should_split = False
 
         if should_split and current_text:
             entries.append({
@@ -301,7 +319,7 @@ def _build_raw_srt(segments) -> str:
                 "text": current_text,
             })
             current_words = []
-            if i + 1 < len(all_words):
+            if not is_last:
                 current_start = all_words[i + 1]["start"]
 
     # Build SRT string
@@ -1034,6 +1052,15 @@ def _transcribe_video(
         word_timestamps = whisper_config.get("word_timestamps", True)
         condition_on_previous = whisper_config.get("condition_on_previous_text", False)
 
+        # Initial prompt primes Whisper to produce properly punctuated,
+        # capitalised output. Without this, condition_on_previous_text=False
+        # often produces lowercase unpunctuated text in the first chunks.
+        initial_prompt = whisper_config.get(
+            "initial_prompt",
+            "Hello, how are you? I'm doing well, thank you. "
+            "This is a conversation with proper punctuation and capitalisation."
+        )
+
         log.info("  Transcribing with Whisper (lang=%s, vad=%s, word_ts=%s) ...",
                  lang or "auto", vad_filter, word_timestamps)
         t0 = time.time()
@@ -1044,12 +1071,13 @@ def _transcribe_video(
                 beam_size=beam_size,
                 vad_filter=vad_filter,
                 vad_parameters=dict(
-                    min_silence_duration_ms=300,   # Shorter silence = more splits
-                    speech_pad_ms=200,             # Pad speech detection to catch quiet starts/ends
-                    min_speech_duration_ms=100,     # Don't filter out short utterances
+                    min_silence_duration_ms=500,   # Don't filter short pauses as silence
+                    speech_pad_ms=300,             # Generous padding to catch quiet starts/ends
+                    min_speech_duration_ms=100,    # Don't filter out short utterances
                 ),
                 word_timestamps=word_timestamps,
                 condition_on_previous_text=condition_on_previous,
+                initial_prompt=initial_prompt,
                 language=lang,
             )
             # Iterate segments as they're generated, logging progress.
