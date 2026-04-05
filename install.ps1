@@ -670,32 +670,38 @@ if ($script:GpuMode -eq "cpu" -and (Test-Path $ConfigFile)) {
 
 Write-Step "Pre-downloading Whisper model '$WhisperModel'"
 Write-Info "This may take a few minutes on first install (~3 GB download) ..."
+Write-Host ""
 
-$downloadScript = @"
+# Write the download script to a temp file so output streams directly to console
+# (showing huggingface_hub's progress bars in real time)
+$dlScriptPath = Join-Path $env:TEMP "transcribe_subs_download_model.py"
+@"
 import sys
 try:
+    from huggingface_hub import snapshot_download
+    path = snapshot_download('Systran/faster-whisper-$WhisperModel')
+    print(f'\nDOWNLOAD_OK:{path}')
+except ImportError:
+    # Fallback if huggingface_hub not available
     from faster_whisper.utils import download_model
     path = download_model('$WhisperModel')
-    print(f'DOWNLOAD_OK:{path}')
+    print(f'\nDOWNLOAD_OK:{path}')
 except Exception as e:
-    print(f'DOWNLOAD_FALLBACK:{e}')
-    try:
-        from faster_whisper import WhisperModel
-        model = WhisperModel('$WhisperModel', device='cpu', compute_type='float32')
-        del model
-        print('DOWNLOAD_OK:model loaded and cached')
-    except Exception as e2:
-        print(f'DOWNLOAD_FAIL:{e2}')
-"@
+    print(f'\nDOWNLOAD_FAIL:{e}')
+"@ | Set-Content $dlScriptPath -Encoding UTF8
 
-$dlResult = & $PythonExe -c $downloadScript 2>&1
-$dlResultStr = ($dlResult | Out-String).Trim()
+# Run WITHOUT capturing output — lets progress bars stream to console
+& $PythonExe $dlScriptPath
+$dlExitCode = $LASTEXITCODE
 
-if ($dlResultStr -match "DOWNLOAD_OK") {
+# Clean up temp script
+Remove-Item $dlScriptPath -ErrorAction SilentlyContinue
+
+Write-Host ""
+if ($dlExitCode -eq 0) {
     Write-OK "Whisper model '$WhisperModel' cached successfully"
 } else {
     Write-Warn "Model pre-download had issues — it will download on first run instead"
-    Write-Info "Details: $dlResultStr"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
