@@ -253,8 +253,6 @@ if (Test-CommandExists "conda") {
     $CommonPaths = @(
         "$env:USERPROFILE\anaconda3\Scripts\conda.exe",
         "$env:USERPROFILE\miniconda3\Scripts\conda.exe",
-        "D:\anaconda3\Scripts\conda.exe",
-        "C:\anaconda3\Scripts\conda.exe",
         "C:\ProgramData\anaconda3\Scripts\conda.exe",
         "C:\ProgramData\miniconda3\Scripts\conda.exe"
     )

@@ -59,10 +59,8 @@ $PythonScript = Join-Path $ScriptDir "transcribe_subs.py"
 
 $CondaBase = $null
 $SearchPaths = @(
-    "D:\anaconda3",
     "$env:USERPROFILE\anaconda3",
     "$env:USERPROFILE\miniconda3",
-    "C:\anaconda3",
     "C:\ProgramData\anaconda3",
     "C:\ProgramData\miniconda3"
 )
