@@ -918,14 +918,87 @@ def _validate_srt(entries: List[dict]) -> List[dict]:
     return valid
 
 
+def _merge_rapid_entries(entries: List[dict], rules: dict) -> List[dict]:
+    """Merge consecutive short entries into 2-line entries.
+
+    Instead of flashing two short subtitles in rapid succession:
+        Entry 1 (1.2s): "Have you searched him?"
+        Entry 2 (1.3s): "83p and a lottery ticket."
+
+    Merge into one entry with more reading time:
+        Entry 1 (2.5s): "Have you searched him?
+                          83p and a lottery ticket."
+
+    Only merges when:
+    - Both entries are short enough to fit as 2 lines (each ≤ 42 chars)
+    - The gap between them is small (< 0.5s)
+    - Combined duration stays within max_duration
+    - Each entry on its own would display for less than 2.5 seconds
+    """
+    max_cpl = rules["max_chars_per_line"]
+    max_dur = rules["max_duration_ms"] / 1000.0
+    min_gap = rules["min_gap_ms"] / 1000.0
+    SHORT_THRESHOLD = 2.5  # Only merge entries shorter than this
+
+    merged = []
+    skip_next = False
+
+    for i, e in enumerate(entries):
+        if skip_next:
+            skip_next = False
+            continue
+
+        # Check if this entry and the next can be merged
+        if i + 1 < len(entries):
+            nxt = entries[i + 1]
+            e_text = e["text"].replace("\n", " ").strip()
+            nxt_text = nxt["text"].replace("\n", " ").strip()
+            e_dur = e["end_sec"] - e["start_sec"]
+            nxt_dur = nxt["end_sec"] - nxt["start_sec"]
+            gap = nxt["start_sec"] - e["end_sec"]
+            combined_dur = nxt["end_sec"] - e["start_sec"]
+
+            can_merge = (
+                len(e_text) <= max_cpl          # First line fits in one line
+                and len(nxt_text) <= max_cpl    # Second line fits in one line
+                and gap < 0.5                   # Entries are close together
+                and gap >= 0                    # Not overlapping
+                and combined_dur <= max_dur     # Combined doesn't exceed max
+                and e_dur < SHORT_THRESHOLD     # First entry is short
+                and nxt_dur < SHORT_THRESHOLD   # Second entry is short
+            )
+
+            if can_merge:
+                merged.append({
+                    "start_sec": e["start_sec"],
+                    "end_sec": nxt["end_sec"],
+                    "start_ts": _seconds_to_srt_time(e["start_sec"]),
+                    "end_ts": _seconds_to_srt_time(nxt["end_sec"]),
+                    "text": e_text + "\n" + nxt_text,
+                })
+                skip_next = True
+                continue
+
+        merged.append(dict(e))
+
+    # Re-index
+    for i, e in enumerate(merged, 1):
+        e["index"] = i
+    return merged
+
+
 def _postprocess(entries: List[dict], rules: dict) -> List[dict]:
     """Orchestrate post-processing: hallucinations, timing, wrapping, validation."""
     entries = _remove_hallucinations(entries)
     entries = _enforce_timing(entries, rules)
 
-    # Wrap lines (code handles this, not LLM)
+    # Merge rapid consecutive short entries into 2-line entries
+    entries = _merge_rapid_entries(entries, rules)
+
+    # Wrap lines for entries that are still single-line and too long
     for e in entries:
-        e["text"] = _wrap_lines(e["text"], rules)
+        if "\n" not in e["text"]:  # Don't re-wrap already merged 2-line entries
+            e["text"] = _wrap_lines(e["text"], rules)
 
     entries = _validate_srt(entries)
     return entries
