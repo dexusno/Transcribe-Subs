@@ -1302,7 +1302,7 @@ def _transcribe_one(
         log.info("[TRANSCRIBE %s/%s] %s", file_num, file_total, rel)
 
         # Path for raw Whisper output (used as cache between runs)
-        raw_srt_path = video_path.with_suffix(".raw.sub")
+        raw_srt_path = video_path.with_suffix(".whisper")
 
         # ── Pass 1: Whisper transcription (or reuse cached raw) ──────────
         if raw_srt_path.exists() and raw_srt_path.stat().st_size > 0:
@@ -1321,11 +1321,11 @@ def _transcribe_one(
                 stats["empty"] += 1
             return
 
-        # Save raw Whisper output as .raw.sub (always — it's the honest label)
+        # Save raw Whisper output as .whisper (always — it's the honest label)
         if not raw_srt_path.exists():
             raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
 
-        # If --skip-llm, we're done — the .raw.sub IS the output
+        # If --skip-llm, we're done — the .whisper IS the output
         if skip_llm:
             elapsed = time.time() - t0
             log.info("  [OK-RAW] %s (%.1fs, lang=%s)", rel, elapsed, detected_lang)
