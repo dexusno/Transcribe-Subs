@@ -76,8 +76,9 @@ HALLUCINATION_PATTERNS = [
     ),
 ]
 
-# Maximum words per second a human can physically speak (~4 words/sec is fast speech)
-MAX_WORDS_PER_SECOND = 4.5
+# Maximum words per second a human can physically speak.
+# Fast speech is ~6-8 w/s. Above 10 w/s is physically impossible.
+MAX_WORDS_PER_SECOND = 10.0
 
 # Sidecar subtitle extensions to look for
 SIDECAR_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
