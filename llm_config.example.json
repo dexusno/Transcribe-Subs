@@ -21,23 +21,15 @@
       "in", "on", "at", "to", "for", "with", "from", "of"
     ]
   },
-  "default_profile": "deepseek-reasoner",
+  "default_profile": "deepseek",
   "profiles": {
-    "deepseek-reasoner": {
+    "deepseek": {
       "api_url": "https://api.deepseek.com/v1/chat/completions",
       "model": "deepseek-reasoner",
       "api_key_env": "DEEPSEEK_API_KEY",
       "batch_size": 500,
       "parallel": 4,
       "timeout": 300
-    },
-    "deepseek": {
-      "api_url": "https://api.deepseek.com/v1/chat/completions",
-      "model": "deepseek-chat",
-      "api_key_env": "DEEPSEEK_API_KEY",
-      "batch_size": 500,
-      "parallel": 8,
-      "timeout": 120
     },
     "openai": {
       "api_url": "https://api.openai.com/v1/chat/completions",

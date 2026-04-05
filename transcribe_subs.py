@@ -94,7 +94,7 @@ def load_config() -> dict:
 
 def resolve_profile(config: dict, profile_name: str | None) -> dict:
     """Resolve a named profile to {api_url, model, api_key, ...}."""
-    name = profile_name or config.get("default_profile", "deepseek-reasoner")
+    name = profile_name or config.get("default_profile", "deepseek")
     profiles = config.get("profiles", {})
     if name not in profiles:
         log.error("Unknown profile '%s'. Available: %s", name, ", ".join(profiles))
@@ -473,16 +473,6 @@ def _build_cleanup_system_prompt() -> str:
     )
 
 
-def _build_cleanup_system_prompt_no_think() -> str:
-    """Build the system prompt with /no_think prefix for DeepSeek non-reasoning models.
-
-    /no_think is a DeepSeek-specific directive that disables extended reasoning
-    to save tokens/cost. It is NOT part of the OpenAI API spec and should only
-    be sent to DeepSeek endpoints.
-    """
-    return "/no_think\n" + _build_cleanup_system_prompt()
-
-
 # Regex to parse [N] markers from LLM response
 _RESPONSE_RE = re.compile(r"\[(\d+)\]\s*(.*?)(?=\n\[\d+\]|\Z)", re.DOTALL)
 
@@ -505,18 +495,10 @@ def _llm_cleanup_batched(
     if not entries:
         return entries
 
-    # Detect provider capabilities from the API URL
-    is_deepseek = "deepseek.com" in api_url.lower()
-    is_reasoner = is_deepseek and "reasoner" in model.lower()
+    # Detect if this is a reasoning model (skip temperature, expect reasoning_content)
+    is_reasoner = "reasoner" in model.lower()
 
-    # Choose system prompt:
-    # - DeepSeek reasoner: plain prompt (reasoning is the whole point)
-    # - DeepSeek chat: add /no_think to skip reasoning and save tokens
-    # - All other providers: plain prompt (they don't understand /no_think)
-    if is_deepseek and not is_reasoner:
-        system_prompt = _build_cleanup_system_prompt_no_think()
-    else:
-        system_prompt = _build_cleanup_system_prompt()
+    system_prompt = _build_cleanup_system_prompt()
 
     # Protect tags
     protected_pairs: List[Tuple[dict, Dict[str, str]]] = []
