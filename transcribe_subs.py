@@ -852,32 +852,30 @@ def _postprocess(entries: List[dict], rules: dict) -> List[dict]:
 def _load_whisper_model(whisper_config: dict) -> WhisperModel:
     """Load faster-whisper model. Called once at startup.
 
-    Sets HF_HUB_OFFLINE=1 if the model is already cached, so it works
-    without internet. If not cached, allows the download to proceed.
+    Tries to load normally (checks HuggingFace for updates).
+    If that fails due to no internet, retries in offline mode
+    using the cached model.
     """
     model_name = whisper_config["model"]
     device = whisper_config["device"]
     compute_type = whisper_config["compute_type"]
 
-    # Check if model is already cached — if so, skip the HuggingFace check
-    try:
-        from huggingface_hub import try_to_load_from_cache
-        cached = try_to_load_from_cache(f"Systran/faster-whisper-{model_name}", "model.bin")
-        if cached is not None:
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            log.debug("Whisper model found in cache — loading offline")
-    except Exception:
-        pass  # If we can't check cache, let it try online
-
     log.info("Loading Whisper model '%s' (device=%s, compute=%s) ...",
              model_name, device, compute_type)
     t0 = time.time()
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+
+    try:
+        model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    except Exception as exc:
+        # If it failed (likely no internet), try offline mode with cached model
+        log.warning("Model load failed (%s) — retrying with cached model ...", exc)
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        try:
+            model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        finally:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+
     log.info("Whisper model loaded in %.1f seconds", time.time() - t0)
-
-    # Reset offline mode so it doesn't affect other things
-    os.environ.pop("HF_HUB_OFFLINE", None)
-
     return model
 
 
