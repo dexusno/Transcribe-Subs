@@ -551,21 +551,27 @@ def _build_cleanup_system_prompt() -> str:
         "\n"
         "Rules:\n"
         "1. Return each entry as: [N] corrected text\n"
-        "2. Fix spelling, grammar, punctuation, and capitalization\n"
-        "3. If the text length EXCEEDS the budget: condense and rephrase\n"
+        "2. Fix spelling, grammar, punctuation, and capitalisation\n"
+        "3. Speech recognition often mishears words. Use the surrounding context\n"
+        "   to identify and correct words that don't make sense. Examples:\n"
+        '   "lorry ticket" in a police search context \u2192 "lottery ticket"\n'
+        '   "tandem gloid" \u2192 "tandem glider"\n'
+        '   "shipped an abbott" (a place name) \u2192 "Shipton Abbott"\n'
+        "   Always consider what word was likely actually spoken.\n"
+        "4. If the text length EXCEEDS the budget: condense and rephrase\n"
         "   to fit within the budget while preserving the full meaning\n"
-        "4. If the text fits within the budget: only correct errors,\n"
+        "5. If the text fits within the budget: only correct errors,\n"
         "   do not rephrase or shorten unnecessarily\n"
-        "5. Remove filler words: um, uh, er, hmm, like (as filler), you know,\n"
+        "6. Remove filler words: um, uh, er, hmm, like (as filler), you know,\n"
         "   I mean, sort of, kind of, well (as filler), right (as filler),\n"
         "   basically, actually (as filler), literally (as filler)\n"
-        "6. Remove false starts and self-corrections:\n"
+        "7. Remove false starts and self-corrections:\n"
         '   "I was\u2014 I went to the store" \u2192 "I went to the store"\n'
-        "7. Remove stuttering and repetition:\n"
+        "8. Remove stuttering and repetition:\n"
         '   "It\'s it\'s really important" \u2192 "It\'s really important"\n'
-        "8. Preserve speaker tone, intent, and character voice\n"
-        "9. Preserve any __TAG0__, __TAG1__ etc. placeholders exactly\n"
-        "10. Do not add explanations. Return ONLY the numbered entries."
+        "9. Preserve speaker tone, intent, and character voice\n"
+        "10. Preserve any __TAG0__, __TAG1__ etc. placeholders exactly\n"
+        "11. Do not add explanations. Return ONLY the numbered entries."
     )
 
 
