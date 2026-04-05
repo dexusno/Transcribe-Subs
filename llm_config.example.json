@@ -27,7 +27,7 @@
       "api_url": "https://api.deepseek.com/v1/chat/completions",
       "model": "deepseek-reasoner",
       "api_key_env": "DEEPSEEK_API_KEY",
-      "batch_size": 500,
+      "batch_size": 150,
       "parallel": 4,
       "timeout": 300
     },
@@ -35,25 +35,25 @@
       "api_url": "https://api.openai.com/v1/chat/completions",
       "model": "gpt-4o",
       "api_key_env": "OPENAI_API_KEY",
-      "batch_size": 500,
-      "parallel": 8,
-      "timeout": 120
+      "batch_size": 150,
+      "parallel": 4,
+      "timeout": 300
     },
     "groq": {
       "api_url": "https://api.groq.com/openai/v1/chat/completions",
       "model": "llama-3.3-70b-versatile",
       "api_key_env": "GROQ_API_KEY",
-      "batch_size": 500,
-      "parallel": 8,
-      "timeout": 120
+      "batch_size": 150,
+      "parallel": 4,
+      "timeout": 300
     },
     "openrouter": {
       "api_url": "https://openrouter.ai/api/v1/chat/completions",
       "model": "deepseek/deepseek-chat",
       "api_key_env": "OPENROUTER_API_KEY",
-      "batch_size": 500,
-      "parallel": 8,
-      "timeout": 120
+      "batch_size": 150,
+      "parallel": 4,
+      "timeout": 300
     },
     "local": {
       "api_url": "http://localhost:1234/v1/chat/completions",
