@@ -474,7 +474,12 @@ def _build_cleanup_system_prompt() -> str:
 
 
 def _build_cleanup_system_prompt_no_think() -> str:
-    """Build the system prompt with /no_think prefix for non-reasoning models."""
+    """Build the system prompt with /no_think prefix for DeepSeek non-reasoning models.
+
+    /no_think is a DeepSeek-specific directive that disables extended reasoning
+    to save tokens/cost. It is NOT part of the OpenAI API spec and should only
+    be sent to DeepSeek endpoints.
+    """
     return "/no_think\n" + _build_cleanup_system_prompt()
 
 
@@ -495,17 +500,23 @@ def _llm_cleanup_batched(
     """Clean up subtitle entries via an OpenAI-compatible LLM API.
 
     Sends batches of entries with character budgets. Returns entries with
-    updated text fields.
+    updated text fields. Works with any OpenAI-compatible API.
     """
     if not entries:
         return entries
 
-    # Choose system prompt based on model (reasoning models don't need /no_think)
-    is_reasoner = "reasoner" in model.lower()
-    if is_reasoner:
-        system_prompt = _build_cleanup_system_prompt()
-    else:
+    # Detect provider capabilities from the API URL
+    is_deepseek = "deepseek.com" in api_url.lower()
+    is_reasoner = is_deepseek and "reasoner" in model.lower()
+
+    # Choose system prompt:
+    # - DeepSeek reasoner: plain prompt (reasoning is the whole point)
+    # - DeepSeek chat: add /no_think to skip reasoning and save tokens
+    # - All other providers: plain prompt (they don't understand /no_think)
+    if is_deepseek and not is_reasoner:
         system_prompt = _build_cleanup_system_prompt_no_think()
+    else:
+        system_prompt = _build_cleanup_system_prompt()
 
     # Protect tags
     protected_pairs: List[Tuple[dict, Dict[str, str]]] = []
@@ -547,7 +558,7 @@ def _llm_cleanup_batched(
                 {"role": "user", "content": user_msg},
             ],
         }
-        # Only set temperature for non-reasoning models
+        # Set temperature for non-reasoning models (reasoner ignores it)
         if not is_reasoner:
             body["temperature"] = 0.3
 
