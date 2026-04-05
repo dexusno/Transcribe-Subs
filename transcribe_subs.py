@@ -543,46 +543,27 @@ def _preprocess(entries: List[dict], rules: dict) -> List[dict]:
 def _build_cleanup_system_prompt() -> str:
     """Build the system prompt for subtitle cleanup via LLM."""
     return (
-        "You are a professional subtitle editor. You will receive subtitle entries\n"
-        "from speech recognition that need cleanup for use as video subtitles.\n"
+        "/no_think\n"
+        "You are a subtitle editor. Clean up speech recognition output for on-screen subtitles.\n"
         "\n"
-        "SUBTITLE FORMATTING CONTEXT:\n"
-        "These subtitles must be readable on screen. Each entry has a character\n"
-        "budget calculated from its display duration at 17 characters per second.\n"
-        "A viewer can read about 17 characters per second comfortably.\n"
-        "The maximum is 42 characters per line, with a maximum of 2 lines per entry.\n"
-        "So the absolute maximum per entry is 84 characters.\n"
-        "Text that exceeds the budget will display too fast for viewers to read.\n"
+        "Input: [N|budget] text — N is entry number, budget is max characters allowed.\n"
+        "Output: [N] corrected text — one line per entry, no line breaks.\n"
         "\n"
-        "INPUT FORMAT:\n"
-        "Each entry is formatted as: [N|budget] text\n"
-        "Where N is the entry number and budget is the maximum character count\n"
-        "for that entry based on its display duration.\n"
+        "Budget is based on display time at 17 characters/second. Max 84 characters per entry.\n"
+        "If text exceeds budget, shorten it while keeping the meaning.\n"
+        "If text fits within budget, only fix errors.\n"
         "\n"
-        "RULES:\n"
-        "1. Return each entry as: [N] corrected text (single line, no line breaks)\n"
-        "2. Fix spelling, grammar, punctuation, and capitalisation.\n"
-        "3. Speech recognition often mishears words. Use the surrounding context\n"
-        "   to identify and correct words that don't make sense. Examples:\n"
-        '   "lorry ticket" in a police search context \u2192 "lottery ticket"\n'
-        '   "tandem gloid" \u2192 "tandem glider"\n'
-        '   "shipped an abbott" (a place name) \u2192 "Shipton Abbott"\n'
-        "   Always consider what word was likely actually spoken.\n"
-        "4. If the text length EXCEEDS the budget: condense and rephrase\n"
-        "   to fit within the budget while preserving the full meaning.\n"
-        "   Prioritise keeping the essential meaning over exact wording.\n"
-        "5. If the text fits within the budget: only correct errors,\n"
-        "   do not rephrase or shorten unnecessarily.\n"
-        "6. Remove filler words: um, uh, er, hmm, like (as filler), you know,\n"
-        "   I mean, sort of, kind of, well (as filler), right (as filler),\n"
-        "   basically, actually (as filler), literally (as filler).\n"
-        "7. Remove false starts and self-corrections:\n"
-        '   "I was\u2014 I went to the store" \u2192 "I went to the store"\n'
-        "8. Remove stuttering and repetition:\n"
-        '   "It\'s it\'s really important" \u2192 "It\'s really important"\n'
-        "9. Preserve speaker tone, intent, and character voice.\n"
-        "10. Preserve any __TAG0__, __TAG1__ etc. placeholders exactly.\n"
-        "11. Do not add explanations. Return ONLY the numbered entries."
+        "Fix these issues:\n"
+        "- Spelling, grammar, punctuation, capitalisation errors\n"
+        "- Misheard words: use context to figure out the correct word\n"
+        "- Filler words: remove um, uh, er, like, you know, I mean, basically\n"
+        "- Stuttering: \"it's it's important\" becomes \"it's important\"\n"
+        "- False starts: \"I was— I went there\" becomes \"I went there\"\n"
+        "\n"
+        "Do not change text that is already correct.\n"
+        "Preserve speaker tone and character voice.\n"
+        "Preserve __TAG0__, __TAG1__ placeholders exactly.\n"
+        "Return ONLY numbered entries. No explanations."
     )
 
 
@@ -608,9 +589,9 @@ def _llm_cleanup_batched(
     if not entries:
         return entries
 
-    # Detect if this is a reasoning model (skip temperature, expect reasoning_content)
-    is_reasoner = "reasoner" in model.lower()
-
+    # We use deepseek-reasoner for its 64K output limit, but disable reasoning
+    # with /no_think in the prompt. This makes it behave like a fast chat model
+    # with a large output window.
     system_prompt = _build_cleanup_system_prompt()
 
     # Protect tags
@@ -653,9 +634,7 @@ def _llm_cleanup_batched(
                 {"role": "user", "content": user_msg},
             ],
         }
-        # Set temperature for non-reasoning models (reasoner ignores it)
-        if not is_reasoner:
-            body["temperature"] = 0.3
+        body["temperature"] = 0.3
 
         # Retry once on failure (timeout, server error, etc.)
         max_retries = 2
@@ -685,13 +664,7 @@ def _llm_cleanup_batched(
                 for k in total_usage:
                     total_usage[k] += usage.get(k, 0)
 
-                # Log reasoning content at debug level if present
                 msg = data["choices"][0]["message"]
-                reasoning = msg.get("reasoning_content")
-                if reasoning:
-                    log.debug("  Reasoning tokens used for batch %d-%d",
-                              i, i + len(batch_entries))
-
                 translated_text = msg.get("content", "").strip()
 
                 # Parse [N] markers from response
