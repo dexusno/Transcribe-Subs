@@ -544,23 +544,23 @@ def _build_cleanup_system_prompt() -> str:
     """Build the system prompt for subtitle cleanup via LLM."""
     return (
         "/no_think\n"
-        "You are a subtitle editor. Clean up speech recognition output for on-screen subtitles.\n"
+        "You are a subtitle editor. Clean up speech recognition output.\n"
         "\n"
-        "Input: [N|budget] text — N is entry number, budget is max characters allowed.\n"
-        "Output: [N] corrected text — one line per entry, no line breaks.\n"
-        "\n"
-        "Budget is based on display time at 17 characters/second. Max 84 characters per entry.\n"
-        "If text exceeds budget, shorten it while keeping the meaning.\n"
-        "If text fits within budget, only fix errors.\n"
+        "Input: [N] text\n"
+        "Output: [N] corrected text\n"
         "\n"
         "Fix these issues:\n"
         "- Spelling, grammar, punctuation, capitalisation errors\n"
         "- Misheard words: use context to figure out the correct word\n"
+        "  (e.g. \"lorry ticket\" should be \"lottery ticket\")\n"
         "- Filler words: remove um, uh, er, like, you know, I mean, basically\n"
         "- Stuttering: \"it's it's important\" becomes \"it's important\"\n"
         "- False starts: \"I was— I went there\" becomes \"I went there\"\n"
         "\n"
-        "Do not change text that is already correct.\n"
+        "IMPORTANT: Do NOT remove, shorten, or rephrase anything else.\n"
+        "Keep every word that is not a filler, stutter, or error.\n"
+        "Do not summarise or condense. Preserve the FULL dialogue.\n"
+        "\n"
         "Preserve speaker tone and character voice.\n"
         "Preserve __TAG0__, __TAG1__ placeholders exactly.\n"
         "Return ONLY numbered entries. No explanations."
@@ -622,8 +622,7 @@ def _llm_cleanup_batched(
         # Build numbered user message with budgets: [N|budget] text
         numbered = []
         for j, (e, text) in enumerate(zip(batch_entries, batch_texts)):
-            budget = e.get("budget", 84)
-            numbered.append(f"[{j}|{budget}] {text}")
+            numbered.append(f"[{j}] {text}")
         user_msg = "\n".join(numbered)
 
         # Build request body
