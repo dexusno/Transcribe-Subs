@@ -1,0 +1,75 @@
+{
+  "whisper": {
+    "model": "large-v3",
+    "device": "cuda",
+    "compute_type": "int8",
+    "language": null,
+    "beam_size": 5,
+    "vad_filter": true
+  },
+  "subtitle_rules": {
+    "max_chars_per_line": 42,
+    "max_lines": 2,
+    "target_cps": 17,
+    "max_cps": 20,
+    "min_duration_ms": 1000,
+    "max_duration_ms": 7000,
+    "min_gap_ms": 83,
+    "preferred_split_words": [
+      "but", "and", "or", "so", "because", "when", "while",
+      "that", "which", "who", "where", "if", "then",
+      "in", "on", "at", "to", "for", "with", "from", "of"
+    ]
+  },
+  "default_profile": "deepseek-reasoner",
+  "profiles": {
+    "deepseek-reasoner": {
+      "api_url": "https://api.deepseek.com/v1/chat/completions",
+      "model": "deepseek-reasoner",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "batch_size": 500,
+      "parallel": 4,
+      "timeout": 300
+    },
+    "deepseek": {
+      "api_url": "https://api.deepseek.com/v1/chat/completions",
+      "model": "deepseek-chat",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "batch_size": 500,
+      "parallel": 8,
+      "timeout": 120
+    },
+    "openai": {
+      "api_url": "https://api.openai.com/v1/chat/completions",
+      "model": "gpt-4o",
+      "api_key_env": "OPENAI_API_KEY",
+      "batch_size": 500,
+      "parallel": 8,
+      "timeout": 120
+    },
+    "groq": {
+      "api_url": "https://api.groq.com/openai/v1/chat/completions",
+      "model": "llama-3.3-70b-versatile",
+      "api_key_env": "GROQ_API_KEY",
+      "batch_size": 500,
+      "parallel": 8,
+      "timeout": 120
+    },
+    "openrouter": {
+      "api_url": "https://openrouter.ai/api/v1/chat/completions",
+      "model": "deepseek/deepseek-chat",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "batch_size": 500,
+      "parallel": 8,
+      "timeout": 120
+    },
+    "local": {
+      "api_url": "http://localhost:1234/v1/chat/completions",
+      "model": "local",
+      "api_key": "none",
+      "timeout": 600,
+      "batch_size": 25,
+      "parallel": 1
+    }
+  }
+}
