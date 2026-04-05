@@ -9,7 +9,7 @@
     "patience": 2.0,
     "vad_filter": false,
     "word_timestamps": true,
-    "condition_on_previous_text": true
+    "condition_on_previous_text": false
   },
   "subtitle_rules": {
     "max_chars_per_line": 42,
