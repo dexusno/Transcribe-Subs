@@ -222,17 +222,95 @@ def _srt_time_to_seconds(ts: str) -> float:
 
 
 def _build_raw_srt(segments) -> str:
-    """Build an SRT string from faster-whisper segments."""
-    blocks = []
-    idx = 1
+    """Build an SRT string from faster-whisper segments.
+
+    Uses word-level timestamps to create subtitle-sized entries
+    (max ~5 seconds, split at natural pauses between words).
+    Falls back to segment-level if word timestamps aren't available.
+    """
+    # Collect all words with timestamps from all segments
+    all_words = []
     for seg in segments:
-        start = _seconds_to_srt_time(seg.start)
-        end = _seconds_to_srt_time(seg.end)
-        text = (seg.text or "").strip()
-        if not text:
-            continue
-        blocks.append(f"{idx}\n{start} --> {end}\n{text}")
-        idx += 1
+        if seg.words:
+            for w in seg.words:
+                all_words.append({
+                    "word": w.word,
+                    "start": w.start,
+                    "end": w.end,
+                    "probability": getattr(w, "probability", 1.0),
+                })
+        else:
+            # Fallback: no word timestamps, use segment as-is
+            text = (seg.text or "").strip()
+            if text:
+                all_words.append({
+                    "word": text,
+                    "start": seg.start,
+                    "end": seg.end,
+                    "probability": 1.0,
+                })
+
+    if not all_words:
+        return ""
+
+    # Build subtitle entries from words, splitting at natural points
+    MAX_DURATION = 5.0    # Max seconds per subtitle entry
+    MAX_CHARS = 84        # Max characters per entry (42 x 2 lines)
+    PAUSE_THRESHOLD = 0.7 # Seconds of silence = forced split
+
+    entries = []
+    current_words = []
+    current_start = all_words[0]["start"]
+
+    for i, word in enumerate(all_words):
+        current_words.append(word)
+        current_text = "".join(w["word"] for w in current_words).strip()
+        current_duration = word["end"] - current_start
+
+        # Check if we should split here
+        should_split = False
+
+        # 1. Max duration reached
+        if current_duration >= MAX_DURATION:
+            should_split = True
+
+        # 2. Max characters reached
+        if len(current_text) >= MAX_CHARS:
+            should_split = True
+
+        # 3. Pause before next word (speaker change or natural break)
+        if i + 1 < len(all_words):
+            gap = all_words[i + 1]["start"] - word["end"]
+            if gap >= PAUSE_THRESHOLD:
+                should_split = True
+
+        # 4. End of sentence punctuation + pause
+        if i + 1 < len(all_words):
+            gap = all_words[i + 1]["start"] - word["end"]
+            if gap >= 0.3 and current_text and current_text[-1] in ".!?":
+                should_split = True
+
+        # 5. Last word
+        if i == len(all_words) - 1:
+            should_split = True
+
+        if should_split and current_text:
+            entries.append({
+                "start": current_start,
+                "end": word["end"],
+                "text": current_text,
+            })
+            current_words = []
+            if i + 1 < len(all_words):
+                current_start = all_words[i + 1]["start"]
+
+    # Build SRT string
+    blocks = []
+    for idx, entry in enumerate(entries, 1):
+        start = _seconds_to_srt_time(entry["start"])
+        end = _seconds_to_srt_time(entry["end"])
+        blocks.append(f"{idx}\n{start} --> {end}\n{entry['text']}")
+
     return "\n\n".join(blocks) + "\n" if blocks else ""
 
 
@@ -953,9 +1031,11 @@ def _transcribe_video(
         lang = language_override or whisper_config.get("language")
         beam_size = whisper_config.get("beam_size", 5)
         vad_filter = whisper_config.get("vad_filter", True)
+        word_timestamps = whisper_config.get("word_timestamps", True)
+        condition_on_previous = whisper_config.get("condition_on_previous_text", False)
 
-        log.info("  Transcribing with Whisper (lang=%s, vad=%s) ...",
-                 lang or "auto", vad_filter)
+        log.info("  Transcribing with Whisper (lang=%s, vad=%s, word_ts=%s) ...",
+                 lang or "auto", vad_filter, word_timestamps)
         t0 = time.time()
 
         with _whisper_lock:
@@ -963,6 +1043,13 @@ def _transcribe_video(
                 str(wav_path),
                 beam_size=beam_size,
                 vad_filter=vad_filter,
+                vad_parameters=dict(
+                    min_silence_duration_ms=300,   # Shorter silence = more splits
+                    speech_pad_ms=200,             # Pad speech detection to catch quiet starts/ends
+                    min_speech_duration_ms=100,     # Don't filter out short utterances
+                ),
+                word_timestamps=word_timestamps,
+                condition_on_previous_text=condition_on_previous,
                 language=lang,
             )
             # Iterate segments as they're generated, logging progress.

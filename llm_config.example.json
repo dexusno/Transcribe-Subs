@@ -5,7 +5,9 @@
     "compute_type": "int8",
     "language": null,
     "beam_size": 5,
-    "vad_filter": true
+    "vad_filter": true,
+    "word_timestamps": true,
+    "condition_on_previous_text": false
   },
   "subtitle_rules": {
     "max_chars_per_line": 42,
