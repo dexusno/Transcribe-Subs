@@ -116,6 +116,9 @@ if ([string]::IsNullOrWhiteSpace($Folder)) {
     Exit-WithError "No folder specified."
 }
 
+# Clean up folder path — trailing backslash causes quoting issues when passed to cmd/python
+$Folder = $Folder.TrimEnd('\', '/')
+
 # Check conda env exists
 if (-not (Test-Path $PythonExe)) {
     Write-Host ""
