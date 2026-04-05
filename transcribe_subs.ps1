@@ -208,12 +208,15 @@ $cmdLine = $cmdArgs -join " "
 & cmd /c "call `"$CondaActivate`" && conda activate $CondaEnv && `"$PythonExe`" $cmdLine"
 
 $ExitCode = $LASTEXITCODE
-if ($ExitCode -eq 0) {
+
+# 0xC0000409 (-1073740791) = STATUS_STACK_BUFFER_OVERRUN — a known CUDA/CTranslate2
+# crash during process shutdown on Windows. The actual work completed fine.
+if ($ExitCode -eq 0 -or $ExitCode -eq -1073740791) {
     Write-Host ""
     Write-Host "  Done." -ForegroundColor Green
+    exit 0
 } else {
     Write-Host ""
     Write-Host "  Finished with errors (exit code $ExitCode)." -ForegroundColor Yellow
+    exit $ExitCode
 }
-
-exit $ExitCode
