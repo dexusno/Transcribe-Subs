@@ -72,22 +72,19 @@ Before running the installer, make sure you have:
 
 ### Step 1: Run the Installer
 
-Open PowerShell and run this one-liner:
+Open PowerShell, `cd` to where you want to install, and run:
 
 ```powershell
+cd D:\
 irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex
 ```
 
-By default, the project is installed to `D:\Transcribe_Subs`. To install somewhere else:
-
-```powershell
-$env:TRANSCRIBE_SUBS_DIR = "E:\MyTools\Transcribe_Subs"; irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex
-```
+This creates a `Transcribe_Subs` folder in your current directory (e.g. `D:\Transcribe_Subs`).
 
 The installer will:
 1. Check for NVIDIA GPU, drivers, and CUDA — offer to install/update if needed
 2. Check for conda, git, ffmpeg — offer to install via winget if missing
-3. Clone the repository to your chosen directory (default: `D:\Transcribe_Subs`)
+3. Clone the repository into a `Transcribe_Subs` folder in your current directory
 4. Create an isolated `transcribe_subs` conda environment with Python 3.11
 5. Install all Python dependencies (faster-whisper, requests, python-dotenv)
 6. Verify CUDA works end-to-end — automatically fix missing runtime libraries

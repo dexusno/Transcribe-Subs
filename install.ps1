@@ -24,12 +24,8 @@ $PythonVersion = "3.11"
 $WhisperModel  = "large-v3"
 $RepoURL       = "https://github.com/dexusno/Transcribe-Subs.git"
 
-# Install location: use env var if set, otherwise default
-if ($env:TRANSCRIBE_SUBS_DIR) {
-    $ProjectDir = $env:TRANSCRIBE_SUBS_DIR
-} else {
-    $ProjectDir = "D:\Transcribe_Subs"
-}
+# Install location: current directory + Transcribe_Subs subfolder
+$ProjectDir    = Join-Path (Get-Location).Path "Transcribe_Subs"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
