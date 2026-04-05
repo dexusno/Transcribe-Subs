@@ -896,6 +896,12 @@ def _remove_hallucinations(entries: List[dict]) -> List[dict]:
                 log.debug("  Hallucination (speed %.1f w/s): %s",
                           words_per_sec, text[:50])
 
+        # 3. Duration check — multiple words in under 0.5 seconds is not real speech
+        if not is_hallucination and word_count >= 3 and duration < 0.5:
+            is_hallucination = True
+            log.debug("  Hallucination (%.3fs too short for %d words): %s",
+                      duration, word_count, text[:50])
+
         if is_hallucination:
             continue
 
