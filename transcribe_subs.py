@@ -1164,20 +1164,19 @@ def _has_any_subtitles(video_path: Path, cache: Optional["DirCache"] = None) -> 
 
     for ext in SIDECAR_EXTENSIONS:
         # Check: Movie.srt, Movie.en.srt, Movie.eng.srt, etc.
+        # Exclude .raw.srt — that's our own Whisper cache, not a finished subtitle
         if cache:
-            # Use cache for network share performance
-            if cache.exists(parent / f"{stem}{ext}"):
-                return True
-            # Also check common patterns like Movie.XX.srt
             for child in cache.children(parent):
-                if child.stem.startswith(stem) and child.suffix == ext:
+                if (child.stem.startswith(stem)
+                        and child.suffix == ext
+                        and not child.name.endswith(".raw.srt")):
                     return True
         else:
-            # Direct filesystem check
             if (parent / f"{stem}{ext}").exists():
                 return True
             for f in parent.glob(f"{stem}.*{ext}"):
-                return True
+                if not f.name.endswith(".raw.srt"):
+                    return True
 
     return False
 
@@ -1324,18 +1323,17 @@ def _transcribe_one(
                 stats["empty"] += 1
             return
 
-        # If --skip-llm, write directly to .srt and return (no .raw.srt needed)
+        # Save raw Whisper output as .raw.srt (always — it's the honest label)
+        if not raw_srt_path.exists():
+            raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
+
+        # If --skip-llm, we're done — the .raw.srt IS the output
         if skip_llm:
-            output_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
             elapsed = time.time() - t0
             log.info("  [OK-RAW] %s (%.1fs, lang=%s)", rel, elapsed, detected_lang)
             with _stats_lock:
                 stats["transcribed"] += 1
             return
-
-        # Save raw output as cache so Whisper can be skipped if LLM fails
-        if not raw_srt_path.exists():
-            raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
 
         # ── Pass 2: Pre-process ──────────────────────────────────────────
         entries = _parse_srt_entries(raw_srt)
