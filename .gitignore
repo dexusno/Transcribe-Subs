@@ -20,6 +20,9 @@ venv/
 *.swp
 *.swo
 
+# Whisper cache files
+*.raw.sub
+
 # Logs
 logs/
 

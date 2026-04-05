@@ -1164,19 +1164,17 @@ def _has_any_subtitles(video_path: Path, cache: Optional["DirCache"] = None) -> 
 
     for ext in SIDECAR_EXTENSIONS:
         # Check: Movie.srt, Movie.en.srt, Movie.eng.srt, etc.
-        # Exclude .raw.srt — that's our own Whisper cache, not a finished subtitle
         if cache:
+            if cache.exists(parent / f"{stem}{ext}"):
+                return True
             for child in cache.children(parent):
-                if (child.stem.startswith(stem)
-                        and child.suffix == ext
-                        and not child.name.endswith(".raw.srt")):
+                if child.stem.startswith(stem) and child.suffix == ext:
                     return True
         else:
             if (parent / f"{stem}{ext}").exists():
                 return True
             for f in parent.glob(f"{stem}.*{ext}"):
-                if not f.name.endswith(".raw.srt"):
-                    return True
+                return True
 
     return False
 
@@ -1304,7 +1302,7 @@ def _transcribe_one(
         log.info("[TRANSCRIBE %s/%s] %s", file_num, file_total, rel)
 
         # Path for raw Whisper output (used as cache between runs)
-        raw_srt_path = video_path.with_suffix(".raw.srt")
+        raw_srt_path = video_path.with_suffix(".raw.sub")
 
         # ── Pass 1: Whisper transcription (or reuse cached raw) ──────────
         if raw_srt_path.exists() and raw_srt_path.stat().st_size > 0:
@@ -1323,11 +1321,11 @@ def _transcribe_one(
                 stats["empty"] += 1
             return
 
-        # Save raw Whisper output as .raw.srt (always — it's the honest label)
+        # Save raw Whisper output as .raw.sub (always — it's the honest label)
         if not raw_srt_path.exists():
             raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
 
-        # If --skip-llm, we're done — the .raw.srt IS the output
+        # If --skip-llm, we're done — the .raw.sub IS the output
         if skip_llm:
             elapsed = time.time() - t0
             log.info("  [OK-RAW] %s (%.1fs, lang=%s)", rel, elapsed, detected_lang)
