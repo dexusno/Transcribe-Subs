@@ -900,8 +900,17 @@ def _transcribe_video(
                 vad_filter=vad_filter,
                 language=lang,
             )
-            # Iterate segments (generator) to collect them
-            segment_list = list(segments)
+            # Iterate segments as they're generated, logging progress
+            segment_list = []
+            last_log = 0
+            for seg in segments:
+                segment_list.append(seg)
+                # Log progress every 100 segments
+                if len(segment_list) - last_log >= 100:
+                    elapsed_so_far = time.time() - t0
+                    log.info("  Whisper progress: %d segments (%.0fs) ...",
+                             len(segment_list), elapsed_so_far)
+                    last_log = len(segment_list)
 
         elapsed = time.time() - t0
         detected_lang = info.language or "unknown"
@@ -1097,9 +1106,12 @@ def _transcribe_one(
     t0 = time.time()
 
     try:
-        log.info("[TRANSCRIBE] %s", rel)
+        file_num = job.get("file_num", "?")
+        file_total = job.get("file_total", "?")
+        log.info("[TRANSCRIBE %s/%s] %s", file_num, file_total, rel)
 
-        # ── Pass 1: Whisper ──────────────────────────────────────────────
+        # ── Pass 1: Whisper transcription ────────────────────────────────
+        log.info("  [Pass 1/4] Whisper transcription")
         raw_srt, detected_lang = _transcribe_video(
             video_path, whisper_model, whisper_config, language_override
         )
@@ -1121,14 +1133,19 @@ def _transcribe_one(
 
         # ── Pass 2: Pre-process ──────────────────────────────────────────
         entries = _parse_srt_entries(raw_srt)
-        log.info("  Pre-processing %d entries ...", len(entries))
+        log.info("  [Pass 2/4] Pre-processing %d entries ...", len(entries))
         entries = _preprocess(entries, rules)
         log.info("  After pre-processing: %d entries", len(entries))
 
         # ── Pass 3: LLM cleanup ─────────────────────────────────────────
+        num_batches = max(1, math.ceil(len(entries) / batch_size))
+        log.info("  [Pass 3/4] LLM cleanup: %d entries in %d batch(es) ...", len(entries), num_batches)
+
         def _progress(total, done):
             if done > 0 and done < total:
-                log.info("  LLM cleanup: %d/%d entries ...", done, total)
+                batch_num = math.ceil(done / batch_size)
+                log.info("  LLM cleanup: batch %d/%d (%d/%d entries)",
+                         batch_num, num_batches, done, total)
 
         try:
             entries = _llm_cleanup_batched(
@@ -1146,6 +1163,7 @@ def _transcribe_one(
             entries = _parse_srt_entries(raw_srt)
 
         # ── Pass 4: Post-process ─────────────────────────────────────────
+        log.info("  [Pass 4/4] Post-processing (timing, line wrapping, validation)")
         entries = _postprocess(entries, rules)
 
         # ── Write output ─────────────────────────────────────────────────
@@ -1203,32 +1221,43 @@ def scan_and_transcribe(
     # Generate jobs (streaming)
     job_gen = _generate_jobs(folder, dry_run, force, stats, cache)
 
+    # Collect all jobs first so we know the total (scan is fast)
+    all_jobs = list(job_gen)
+
     if dry_run:
-        # Exhaust generator to collect stats
-        for _ in job_gen:
-            pass
         return stats
+
+    if not all_jobs:
+        log.info("No files to process")
+        return stats
+
+    # Apply limit
+    if limit > 0:
+        all_jobs = all_jobs[:limit]
+
+    # Number the jobs for progress display
+    total_jobs = len(all_jobs)
+    for i, job in enumerate(all_jobs, 1):
+        job["file_num"] = i
+        job["file_total"] = total_jobs
+
+    log.info("Processing %d file(s) ...", total_jobs)
+    log.info("-" * 70)
 
     # Process with thread pool
     # Note: Whisper inference is serialized via _whisper_lock, but audio
     # extraction, LLM calls, and file I/O can overlap between threads.
     workers = max(1, parallel)
     futures = {}
-    completed = 0
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        submitted = 0
-        for job in job_gen:
-            if 0 < limit <= submitted:
-                break
-
+        for job in all_jobs:
             future = pool.submit(
                 _transcribe_one,
                 job, whisper_model, whisper_config, language_override,
                 rules, batch_size, profile, skip_llm, stats,
             )
             futures[future] = job
-            submitted += 1
 
         # Harvest completed
         for future in as_completed(futures):
