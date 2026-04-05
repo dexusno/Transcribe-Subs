@@ -1120,7 +1120,8 @@ def _generate_jobs(
                 continue
 
         # 2. Video already has subtitles?
-        if _has_any_subtitles(video_path, cache):
+        #    Skip this check if --force (user wants to re-transcribe regardless)
+        if not force and _has_any_subtitles(video_path, cache):
             log.debug("  SKIP (has subtitles): %s", rel)
             stats["has_subs"] += 1
             continue
