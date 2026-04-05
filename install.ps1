@@ -22,10 +22,6 @@ $WhisperModel  = "large-v3"
 $ProjectDir    = "D:\Transcribe_Subs"
 $RepoURL       = "https://github.com/dexusno/Transcribe-Subs.git"
 
-# Minimum versions
-$MinDriverVersion = 525.0    # Minimum NVIDIA driver for CUDA 12
-$MinCudaVersion   = 12.0     # CTranslate2/faster-whisper requires CUDA 12
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 function Write-Step {
@@ -107,34 +103,51 @@ Write-Host "  ================================================================" 
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 1: GPU Detection & Driver Check
 # ══════════════════════════════════════════════════════════════════════════════
+#
+# Philosophy: No hardcoded version numbers. Driver/CUDA versions change
+# constantly. Instead we just TEST if things actually work:
+#   1. Is there NVIDIA hardware? (WMI or nvidia-smi)
+#   2. Does nvidia-smi run? (= drivers are installed and functional)
+#   3. Does CTranslate2 see CUDA? (= the full stack works end-to-end)
+# If any step fails, we offer to fix it and fall back to CPU.
 
 Write-Step "Checking GPU and drivers"
 
 $GpuDetected = $false
-$DriverOK = $false
-$CudaOK = $false
+$DriversWorking = $false
 $GpuName = ""
-$DriverVersion = 0.0
-$CudaVersion = 0.0
+$DriverVersion = ""
+$CudaVersion = ""
 
-# --- Try nvidia-smi first ---
+# --- Try nvidia-smi first (proves drivers are installed AND working) ---
 if (Test-CommandExists "nvidia-smi") {
     try {
         $smiOutput = & nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>$null
         if ($smiOutput -and $LASTEXITCODE -eq 0) {
             $parts = $smiOutput.Trim() -split ",\s*"
             $GpuName = $parts[0].Trim()
-            $DriverVersion = [double]($parts[1].Trim())
+            $DriverVersion = $parts[1].Trim()
             $GpuDetected = $true
+            $DriversWorking = $true
             Write-OK "NVIDIA GPU detected: $GpuName"
-            Write-Info "VRAM: $($parts[2].Trim())"
+            Write-Info "VRAM: $($parts[2].Trim()), Driver: $DriverVersion"
+
+            # Also grab CUDA version for display (informational only)
+            try {
+                $smiHeader = & nvidia-smi 2>$null | Select-Object -First 5
+                $cudaMatch = ($smiHeader | Select-String "CUDA Version:\s+([\d.]+)").Matches
+                if ($cudaMatch.Count -gt 0) {
+                    $CudaVersion = $cudaMatch[0].Groups[1].Value
+                    Write-Info "CUDA support: $CudaVersion"
+                }
+            } catch {}
         }
     } catch {
-        # nvidia-smi exists but failed
+        # nvidia-smi exists but crashed — drivers are broken
     }
 }
 
-# --- If no GPU via nvidia-smi, check Device Manager ---
+# --- If nvidia-smi didn't work, check if GPU hardware exists via WMI ---
 if (-not $GpuDetected) {
     try {
         $gpus = Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue
@@ -142,84 +155,62 @@ if (-not $GpuDetected) {
         if ($nvidiaGpu) {
             $GpuName = $nvidiaGpu.Name
             $GpuDetected = $true
-            Write-OK "NVIDIA GPU found in Device Manager: $GpuName"
-            Write-Warn "nvidia-smi not working — drivers may not be installed correctly"
+            Write-OK "NVIDIA GPU found: $GpuName"
+            Write-Warn "nvidia-smi not working — drivers are missing or broken"
         } else {
             $allGpus = ($gpus | ForEach-Object { $_.Name }) -join ", "
-            Write-Warn "No NVIDIA GPU detected. Found: $allGpus"
+            if ($allGpus) {
+                Write-Warn "No NVIDIA GPU detected. Found: $allGpus"
+            } else {
+                Write-Warn "No GPU hardware detected"
+            }
         }
     } catch {
         Write-Warn "Could not query GPU hardware"
     }
 }
 
-# --- No GPU at all? Ask the user ---
+# --- Decision tree based on what we found ---
+
 if (-not $GpuDetected) {
-    Write-Warn "No NVIDIA GPU was detected on this system."
+    # No NVIDIA hardware found at all
     Write-Info ""
-    Write-Info "Whisper CAN run on CPU, but it will be 10-20x slower:"
-    Write-Info "  GPU (RTX 4090): ~2-3 minutes per movie"
-    Write-Info "  CPU:            ~30-60 minutes per movie"
+    Write-Info "Whisper CAN run on CPU, but it will be much slower:"
+    Write-Info "  GPU:  ~2-3 minutes per movie"
+    Write-Info "  CPU:  ~30-60 minutes per movie"
     Write-Info ""
 
     if (Ask-YesNo "Do you have an NVIDIA GPU that should be detected?" $false) {
         Write-Info ""
-        Write-Info "Your GPU may need drivers installed. Common fixes:"
-        Write-Info "  1. Install NVIDIA drivers: https://www.nvidia.com/Download/index.aspx"
-        Write-Info "  2. After installing, restart your computer"
+        Write-Info "Your GPU may need drivers. Steps:"
+        Write-Info "  1. Install drivers: https://www.nvidia.com/Download/index.aspx"
+        Write-Info "  2. Restart your computer"
         Write-Info "  3. Run this installer again"
         Write-Info ""
 
-        if (Ask-YesNo "Would you like to install NVIDIA GeForce drivers now via winget?" $true) {
+        if (Ask-YesNo "Would you like to install NVIDIA drivers now via winget?" $true) {
             $installed = Install-WithWinget "Nvidia.GeForceExperience" "NVIDIA GeForce Experience (includes drivers)"
             if ($installed) {
-                Write-Warn "NVIDIA drivers installed — you MUST restart your computer before continuing"
+                Write-Warn "Drivers installed — you MUST restart your computer"
                 Write-Warn "After restart, run this installer again."
-                $script:NeedsRestart = $true
+                Write-Host ""
+                Write-Host "  Please restart your computer and run the installer again." -ForegroundColor Yellow
+                Write-Host ""
+                exit 0
             } else {
-                Write-Info "Download drivers manually: https://www.nvidia.com/Download/index.aspx"
+                Write-Info "Download manually: https://www.nvidia.com/Download/index.aspx"
             }
         }
-
-        if ($script:NeedsRestart) {
-            Write-Host ""
-            Write-Host "  Please restart your computer and run the installer again." -ForegroundColor Yellow
-            Write-Host ""
-            exit 0
-        }
-
-        Write-Info "Continuing with CPU mode (you can re-run installer after driver setup)"
+        Write-Info "Continuing with CPU mode — re-run installer after driver setup"
     } else {
-        Write-Info "Continuing with CPU mode — Whisper will work, just slower"
+        Write-Info "Continuing with CPU mode"
     }
-}
 
-# --- Check driver version ---
-if ($GpuDetected -and $DriverVersion -gt 0) {
-    Write-Info "Driver version: $DriverVersion"
+} elseif (-not $DriversWorking) {
+    # GPU hardware exists, but nvidia-smi doesn't work (no drivers / broken drivers)
+    Write-Warn "GPU hardware found but drivers are not functional"
 
-    if ($DriverVersion -ge $MinDriverVersion) {
-        $DriverOK = $true
-        Write-OK "Driver version $DriverVersion is sufficient (minimum: $MinDriverVersion)"
-    } else {
-        Write-Warn "Driver version $DriverVersion is too old (minimum: $MinDriverVersion for CUDA 12)"
-        Write-Info ""
-
-        if (Ask-YesNo "Would you like to update your NVIDIA drivers now?" $true) {
-            $installed = Install-WithWinget "Nvidia.GeForceExperience" "NVIDIA GeForce Experience (includes drivers)"
-            if ($installed) {
-                Write-Warn "Drivers updated — a restart may be needed for changes to take effect"
-                $script:NeedsRestart = $true
-            } else {
-                Write-Info "Update drivers manually: https://www.nvidia.com/Download/index.aspx"
-            }
-        }
-    }
-} elseif ($GpuDetected) {
-    # GPU found in Device Manager but nvidia-smi didn't work (no driver or broken driver)
-    Write-Warn "NVIDIA GPU found but drivers are not working"
-
-    if (Ask-YesNo "Would you like to install NVIDIA drivers now?" $true) {
+    if (Ask-YesNo "Would you like to install/repair NVIDIA drivers now?" $true) {
         $installed = Install-WithWinget "Nvidia.GeForceExperience" "NVIDIA GeForce Experience (includes drivers)"
         if ($installed) {
             Write-Warn "Drivers installed — you MUST restart your computer"
@@ -229,46 +220,17 @@ if ($GpuDetected -and $DriverVersion -gt 0) {
             Write-Host ""
             exit 0
         } else {
-            Write-Info "Download drivers manually: https://www.nvidia.com/Download/index.aspx"
+            Write-Info "Download manually: https://www.nvidia.com/Download/index.aspx"
         }
     }
-}
+    Write-Info "Continuing with CPU mode — re-run installer after driver setup"
 
-# --- Check CUDA version (from nvidia-smi header) ---
-if ($DriverOK) {
-    try {
-        $smiHeader = & nvidia-smi 2>$null | Select-Object -First 5
-        $cudaMatch = ($smiHeader | Select-String "CUDA Version:\s+([\d.]+)").Matches
-        if ($cudaMatch.Count -gt 0) {
-            $CudaVersion = [double]$cudaMatch[0].Groups[1].Value
-            Write-Info "CUDA version (driver support): $CudaVersion"
-
-            if ($CudaVersion -ge $MinCudaVersion) {
-                $CudaOK = $true
-                Write-OK "CUDA $CudaVersion supported (minimum: $MinCudaVersion)"
-            } else {
-                Write-Warn "CUDA $CudaVersion is below minimum $MinCudaVersion"
-                Write-Warn "Update your NVIDIA drivers to get CUDA 12+ support"
-            }
-        }
-    } catch {
-        Write-Warn "Could not determine CUDA version"
-    }
-}
-
-# --- Set GPU mode ---
-if ($CudaOK) {
-    $script:GpuMode = "cuda"
-    Write-OK "GPU mode: CUDA (fast)"
-} elseif ($GpuDetected -and -not $DriverOK) {
-    Write-Warn "GPU detected but drivers need updating — falling back to CPU mode"
-    Write-Info "Update drivers and re-run installer to enable GPU acceleration"
-    $script:GpuMode = "cpu"
 } else {
-    $script:GpuMode = "cpu"
-    if ($GpuDetected) {
-        Write-Warn "GPU mode: CPU (driver/CUDA issues — see above)"
-    }
+    # GPU detected AND nvidia-smi works — drivers are functional.
+    # Whether they're new enough for CUDA will be tested after pip install
+    # (Step 5) by actually trying CTranslate2. No version number guessing.
+    $script:GpuMode = "cuda"
+    Write-OK "GPU and drivers are working — CUDA will be verified after package install"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -464,18 +426,56 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-OK "Python packages installed"
 
-# --- Verify CUDA works inside faster-whisper ---
+# --- Verify CUDA actually works end-to-end ---
+# This is the REAL test. No version number guessing — we ask CTranslate2
+# to actually use CUDA. If the driver is too old, CUDA libs are missing,
+# or anything else is wrong, this will catch it.
 if ($script:GpuMode -eq "cuda") {
-    Write-Info "Verifying CUDA availability in Python ..."
+    Write-Info "Verifying CUDA works end-to-end in CTranslate2 ..."
 
+    # This script:
+    # 1. Asks CTranslate2 to actually use CUDA (the real test)
+    # 2. If it fails, discovers what CUDA version ctranslate2 was built
+    #    against and what the installed driver supports, so we can show
+    #    the user a meaningful message with no hardcoded versions.
     $cudaCheckScript = @"
 import sys
 try:
     import ctranslate2
-    if 'cuda' in ctranslate2.get_supported_compute_types('cuda'):
-        print('CUDA_OK')
+
+    # --- Discover versions (informational, for error messages) ---
+    ct2_version = getattr(ctranslate2, '__version__', 'unknown')
+    cuda_build = 'unknown'
+    try:
+        # ctranslate2 exposes what CUDA it was compiled for
+        cuda_build = getattr(ctranslate2, 'cuda_version', None)
+        if cuda_build is None:
+            # Some versions expose it differently
+            import importlib.metadata
+            meta = importlib.metadata.metadata('ctranslate2')
+            for line in (meta.get_all('Requires-Dist') or []):
+                if 'nvidia' in line.lower() and 'cu' in line.lower():
+                    cuda_build = line
+                    break
+    except Exception:
+        pass
+
+    # --- The actual test: can CTranslate2 use CUDA? ---
+    supported = ctranslate2.get_supported_compute_types('cuda')
+    if supported:
+        print(f'CUDA_OK:supported={",".join(sorted(supported))}')
     else:
-        print('CUDA_MISSING')
+        print(f'CUDA_NONE:ct2={ct2_version},cuda_build={cuda_build}')
+
+except RuntimeError as e:
+    # RuntimeError = driver too old, CUDA unavailable, etc.
+    # Include discovered info so the installer can show a helpful message
+    try:
+        import ctranslate2
+        ct2_ver = getattr(ctranslate2, '__version__', '?')
+    except Exception:
+        ct2_ver = '?'
+    print(f'CUDA_RUNTIME_ERROR:ct2={ct2_ver}|{e}')
 except Exception as e:
     print(f'CUDA_ERROR:{e}')
 "@
@@ -484,34 +484,88 @@ except Exception as e:
     $cudaResultStr = ($cudaResult | Out-String).Trim()
 
     if ($cudaResultStr -match "CUDA_OK") {
-        Write-OK "CUDA verified in CTranslate2 — GPU acceleration is working"
-    } elseif ($cudaResultStr -match "CUDA_MISSING") {
-        Write-Warn "CTranslate2 installed but CUDA not available"
-        Write-Info "This usually means CUDA 12 runtime libraries are missing."
+        Write-OK "CUDA verified — GPU acceleration is working"
+        # Extract supported types for info
+        if ($cudaResultStr -match "supported=(.+)$") {
+            Write-Info "Supported compute types: $($Matches[1])"
+        }
+    } elseif ($cudaResultStr -match "CUDA_RUNTIME_ERROR:(.+)") {
+        $errorDetail = $Matches[1].Trim()
+
+        # Parse out CTranslate2 version from the error for display
+        $ct2Ver = ""
+        if ($errorDetail -match "ct2=([^|]+)\|(.+)") {
+            $ct2Ver = $Matches[1].Trim()
+            $errorMsg = $Matches[2].Trim()
+        } else {
+            $errorMsg = $errorDetail
+        }
+
+        Write-Warn "CUDA not available: $errorMsg"
+        if ($ct2Ver) {
+            Write-Info "CTranslate2 version: $ct2Ver"
+        }
+        if ($DriverVersion) {
+            Write-Info "Installed driver: $DriverVersion"
+        }
         Write-Info ""
 
-        if (Ask-YesNo "Would you like to install CUDA Toolkit 12 via conda?" $true) {
-            Write-Info "Installing CUDA toolkit (this may take a few minutes) ..."
-            & cmd /c "call `"$CondaActivate`" && conda activate $EnvName && conda install -c nvidia cuda-toolkit -y" 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                # Re-check
-                $recheck = & $PythonExe -c $cudaCheckScript 2>&1
-                $recheckStr = ($recheck | Out-String).Trim()
-                if ($recheckStr -match "CUDA_OK") {
-                    Write-OK "CUDA now working after toolkit install"
+        # Detect common failure reasons from the error message
+        if ($errorMsg -match "driver|CUDA driver|insufficient|not compatible|not supported") {
+            Write-Warn "Your NVIDIA driver may be too old for the installed CUDA libraries."
+            Write-Info "Update your drivers: https://www.nvidia.com/Download/index.aspx"
+            Write-Info ""
+            if (Ask-YesNo "Would you like to update NVIDIA drivers now via winget?" $true) {
+                $installed = Install-WithWinget "Nvidia.GeForceExperience" "NVIDIA GeForce Experience (includes drivers)"
+                if ($installed) {
+                    Write-Warn "Drivers updated — a restart may be needed"
+                    Write-Info "Re-run this installer after restarting to verify CUDA"
+                    $script:NeedsRestart = $true
+                }
+            }
+            $script:GpuMode = "cpu"
+        } else {
+            # Generic CUDA failure — try installing runtime libs
+            if (Ask-YesNo "Would you like to try installing CUDA runtime libraries via conda?" $true) {
+                Write-Info "Installing CUDA toolkit (this may take a few minutes) ..."
+                & cmd /c "call `"$CondaActivate`" && conda activate $EnvName && conda install -c nvidia cuda-toolkit -y" 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $recheck = & $PythonExe -c $cudaCheckScript 2>&1
+                    $recheckStr = ($recheck | Out-String).Trim()
+                    if ($recheckStr -match "CUDA_OK") {
+                        Write-OK "CUDA now working after toolkit install"
+                    } else {
+                        Write-Warn "CUDA still not available — falling back to CPU"
+                        $script:GpuMode = "cpu"
+                    }
                 } else {
-                    Write-Warn "CUDA still not available — Whisper will use CPU"
-                    Write-Info "You may need to install CUDA Toolkit manually:"
-                    Write-Info "  https://developer.nvidia.com/cuda-downloads"
+                    Write-Warn "Toolkit install failed — falling back to CPU"
                     $script:GpuMode = "cpu"
                 }
             } else {
-                Write-Warn "conda cuda-toolkit install failed"
-                Write-Info "Try: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12"
+                $script:GpuMode = "cpu"
+            }
+        }
+    } elseif ($cudaResultStr -match "CUDA_NONE") {
+        Write-Warn "CTranslate2 reports no CUDA compute types available"
+        if ($cudaResultStr -match "ct2=([^,]+)") {
+            Write-Info "CTranslate2 version: $($Matches[1])"
+        }
+        Write-Info "This may mean the installed package doesn't include CUDA support."
+        Write-Info ""
+
+        if (Ask-YesNo "Would you like to try installing CUDA runtime libraries via conda?" $true) {
+            Write-Info "Installing CUDA toolkit ..."
+            & cmd /c "call `"$CondaActivate`" && conda activate $EnvName && conda install -c nvidia cuda-toolkit -y" 2>&1
+            $recheck = & $PythonExe -c $cudaCheckScript 2>&1
+            $recheckStr = ($recheck | Out-String).Trim()
+            if ($recheckStr -match "CUDA_OK") {
+                Write-OK "CUDA now working"
+            } else {
+                Write-Warn "CUDA still not available — falling back to CPU"
                 $script:GpuMode = "cpu"
             }
         } else {
-            Write-Warn "CUDA not available — Whisper will fall back to CPU"
             $script:GpuMode = "cpu"
         }
     } else {
@@ -606,7 +660,10 @@ if (Test-Path $EnvFile) {
 # Done
 # ══════════════════════════════════════════════════════════════════════════════
 
-$deviceDisplay = if ($script:GpuMode -eq "cuda") { "$GpuName (CUDA $CudaVersion)" } else { "CPU" }
+$deviceDisplay = if ($script:GpuMode -eq "cuda") {
+    $extra = if ($CudaVersion) { " (CUDA $CudaVersion)" } else { "" }
+    "$GpuName$extra"
+} else { "CPU" }
 
 Write-Host ""
 Write-Host "  ================================================================" -ForegroundColor Green
