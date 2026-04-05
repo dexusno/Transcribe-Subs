@@ -862,6 +862,26 @@ def _extract_audio(video_path: Path, output_wav: Path) -> bool:
         return False
 
 
+def _get_media_duration(path: Path) -> Optional[float]:
+    """Get duration of a media file in seconds via ffprobe."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        pass
+    return None
+
+
 _whisper_lock = threading.Lock()
 
 
@@ -881,6 +901,12 @@ def _transcribe_video(
     wav_path = Path(tmp_dir) / f"transcribe_subs_{os.getpid()}_{video_path.stem}.wav"
 
     try:
+        # Get video duration for progress percentage
+        total_duration = _get_media_duration(video_path)
+        if total_duration:
+            dur_display = _seconds_to_srt_time(total_duration).rsplit(",", 1)[0]
+            log.info("  Video duration: %s", dur_display)
+
         log.info("  Extracting audio ...")
         if not _extract_audio(video_path, wav_path):
             raise RuntimeError(f"Failed to extract audio from {video_path}")
@@ -901,17 +927,22 @@ def _transcribe_video(
                 language=lang,
             )
             # Iterate segments as they're generated, logging progress.
-            # Whisper streams segments — total is unknown until done.
-            # Show timestamp position so user sees how far through the audio we are.
+            # Whisper streams segments — total is unknown until done,
+            # but we know video duration so we can show percentage.
             segment_list = []
             last_log = 0
             for seg in segments:
                 segment_list.append(seg)
                 if len(segment_list) - last_log >= 100:
-                    pos = _seconds_to_srt_time(seg.end).rsplit(",", 1)[0]  # HH:MM:SS
+                    pos = _seconds_to_srt_time(seg.end).rsplit(",", 1)[0]
                     elapsed_so_far = time.time() - t0
-                    log.info("  Whisper: %d segments, at %s (%.0fs elapsed)",
-                             len(segment_list), pos, elapsed_so_far)
+                    if total_duration and total_duration > 0:
+                        pct = min(99, int(seg.end / total_duration * 100))
+                        log.info("  Whisper: %d segments, at %s / %s (%d%%)",
+                                 len(segment_list), pos, dur_display, pct)
+                    else:
+                        log.info("  Whisper: %d segments, at %s (%.0fs elapsed)",
+                                 len(segment_list), pos, elapsed_so_far)
                     last_log = len(segment_list)
 
         elapsed = time.time() - t0
