@@ -27,11 +27,11 @@
   "profiles": {
     "deepseek": {
       "api_url": "https://api.deepseek.com/v1/chat/completions",
-      "model": "deepseek-reasoner",
+      "model": "deepseek-chat",
       "api_key_env": "DEEPSEEK_API_KEY",
       "batch_size": 150,
       "parallel": 4,
-      "timeout": 300
+      "timeout": 120
     },
     "openai": {
       "api_url": "https://api.openai.com/v1/chat/completions",
