@@ -79,7 +79,7 @@ HALLUCINATION_PATTERNS = [
 # Maximum words per second a human can physically speak.
 # Normal speech: 3-4 w/s. Fast TV dialogue: 6-8 w/s.
 # Auctioneers: ~12 w/s. Above 14 is physically impossible.
-MAX_WORDS_PER_SECOND = 14.0
+MAX_WORDS_PER_SECOND = 12.0
 
 # Sidecar subtitle extensions to look for
 SIDECAR_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
