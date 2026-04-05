@@ -71,7 +71,7 @@ HALLUCINATION_PATTERNS = [
         r"we'll be right back|"
         r"\u00a9.*|"                              # © copyright lines
         r"transcript\s+\w+.*"                     # "transcript Emily Beynon" etc.
-        r")\s*$",
+        r")[.!?,;]*\s*$",
         re.IGNORECASE,
     ),
 ]
