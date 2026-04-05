@@ -1317,9 +1317,6 @@ def _transcribe_one(
             raw_srt, detected_lang = _transcribe_video(
                 video_path, whisper_model, whisper_config, language_override
             )
-            # Save raw output so Whisper doesn't need to re-run if LLM fails
-            if raw_srt.strip():
-                raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
 
         if not raw_srt.strip():
             log.warning("  [EMPTY] No speech detected: %s", rel)
@@ -1327,7 +1324,7 @@ def _transcribe_one(
                 stats["empty"] += 1
             return
 
-        # If --skip-llm, write raw and return
+        # If --skip-llm, write directly to .srt and return (no .raw.srt needed)
         if skip_llm:
             output_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
             elapsed = time.time() - t0
@@ -1335,6 +1332,10 @@ def _transcribe_one(
             with _stats_lock:
                 stats["transcribed"] += 1
             return
+
+        # Save raw output as cache so Whisper can be skipped if LLM fails
+        if not raw_srt_path.exists():
+            raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
 
         # ── Pass 2: Pre-process ──────────────────────────────────────────
         entries = _parse_srt_entries(raw_srt)
