@@ -544,44 +544,58 @@ def _llm_cleanup_batched(
         if not is_reasoner:
             body["temperature"] = 0.3
 
-        try:
-            resp = requests.post(
-                api_url,
-                headers=headers,
-                json=body,
-                timeout=api_timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        # Retry once on failure (timeout, server error, etc.)
+        max_retries = 2
+        batch_success = False
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.post(
+                    api_url,
+                    headers=headers,
+                    json=body,
+                    timeout=api_timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
-            # Accumulate usage
-            usage = data.get("usage", {})
-            for k in total_usage:
-                total_usage[k] += usage.get(k, 0)
+                # Accumulate usage
+                usage = data.get("usage", {})
+                for k in total_usage:
+                    total_usage[k] += usage.get(k, 0)
 
-            # Log reasoning content at debug level if present
-            msg = data["choices"][0]["message"]
-            reasoning = msg.get("reasoning_content")
-            if reasoning:
-                log.debug("  Reasoning tokens used for batch %d-%d",
-                          i, i + len(batch_entries))
+                # Log reasoning content at debug level if present
+                msg = data["choices"][0]["message"]
+                reasoning = msg.get("reasoning_content")
+                if reasoning:
+                    log.debug("  Reasoning tokens used for batch %d-%d",
+                              i, i + len(batch_entries))
 
-            translated_text = msg.get("content", "").strip()
+                translated_text = msg.get("content", "").strip()
 
-            # Parse [N] markers from response
-            results: Dict[int, str] = {}
-            for match in _RESPONSE_RE.finditer(translated_text):
-                idx = int(match.group(1))
-                text = match.group(2).strip()
-                results[idx] = text
+                # Parse [N] markers from response
+                results: Dict[int, str] = {}
+                for match in _RESPONSE_RE.finditer(translated_text):
+                    idx = int(match.group(1))
+                    text = match.group(2).strip()
+                    results[idx] = text
 
-            # Map results back, fallback to original on missing
-            for j in range(len(batch_texts)):
-                cleaned_texts.append(results.get(j, batch_texts[j]))
+                # Map results back, fallback to original on missing
+                for j in range(len(batch_texts)):
+                    cleaned_texts.append(results.get(j, batch_texts[j]))
 
-        except Exception as exc:
-            log.warning("  LLM batch %d-%d failed: %s — using raw text",
-                        i, i + len(batch_entries), exc)
+                batch_success = True
+                break  # Success — don't retry
+
+            except Exception as exc:
+                if attempt < max_retries:
+                    log.warning("  LLM batch %d-%d attempt %d failed: %s — retrying ...",
+                                i, i + len(batch_entries), attempt, exc)
+                    time.sleep(2)  # Brief pause before retry
+                else:
+                    log.warning("  LLM batch %d-%d failed after %d attempts: %s — using raw text",
+                                i, i + len(batch_entries), max_retries, exc)
+
+        if not batch_success:
             # Fallback: keep original text for this batch
             cleaned_texts.extend(batch_texts)
 
