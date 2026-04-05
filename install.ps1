@@ -631,7 +631,14 @@ except Exception as e:
 }
 
 # --- Update llm_config.json with detected GPU mode ---
+# (ConfigFile path is set here for the CUDA check; Step 7 may create the file later,
+#  but if it already exists at this point we patch it now)
 $ConfigFile = Join-Path $ProjectDir "llm_config.json"
+$ConfigExample = Join-Path $ProjectDir "llm_config.example.json"
+# Ensure config exists before patching (copy from example if needed)
+if (-not (Test-Path $ConfigFile) -and (Test-Path $ConfigExample)) {
+    Copy-Item $ConfigExample $ConfigFile
+}
 if ($script:GpuMode -eq "cpu" -and (Test-Path $ConfigFile)) {
     try {
         $configJson = Get-Content $ConfigFile -Raw | ConvertFrom-Json
@@ -683,11 +690,27 @@ if ($dlResultStr -match "DOWNLOAD_OK") {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Step 7: Set up .env file
+# Step 7: Set up config files
 # ══════════════════════════════════════════════════════════════════════════════
 
-Write-Step "Checking .env configuration"
+Write-Step "Setting up configuration files"
 
+# --- llm_config.json (from example) ---
+$ConfigFile = Join-Path $ProjectDir "llm_config.json"
+$ConfigExample = Join-Path $ProjectDir "llm_config.example.json"
+
+if (Test-Path $ConfigFile) {
+    Write-OK "llm_config.json exists"
+} else {
+    if (Test-Path $ConfigExample) {
+        Copy-Item $ConfigExample $ConfigFile
+        Write-OK "Created llm_config.json from llm_config.example.json"
+    } else {
+        Write-Warn "llm_config.example.json not found — llm_config.json must be created manually"
+    }
+}
+
+# --- .env (from example) ---
 $EnvFile = Join-Path $ProjectDir ".env"
 $EnvExample = Join-Path $ProjectDir ".env.example"
 

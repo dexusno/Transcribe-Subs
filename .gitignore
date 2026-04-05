@@ -1,6 +1,9 @@
 # Environment / secrets
 .env
 
+# User config (llm_config.example.json is tracked instead)
+llm_config.json
+
 # Python
 __pycache__/
 *.py[cod]
