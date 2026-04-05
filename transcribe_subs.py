@@ -67,7 +67,10 @@ HALLUCINATION_PATTERNS = [
         r"subtitles made by|captioned by|"
         r"amara\.org|opensubtitles|subscene|"
         r"music|music playing|\u266a[\s\u266a]*|"
-        r"\.{4,}|_{4,}|-{4,}"
+        r"\.{4,}|_{4,}|-{4,}|"
+        r"we'll be right back|"
+        r"\u00a9.*|"                              # © copyright lines
+        r"transcript\s+\w+.*"                     # "transcript Emily Beynon" etc.
         r")\s*$",
         re.IGNORECASE,
     ),
@@ -737,15 +740,10 @@ def _wrap_lines(text: str, rules: dict) -> str:
 
     max_total = max_cpl * max_lines  # 84 for 42×2
 
-    # Truncate to max total if still too long
-    if len(text) > max_total:
-        # Cut at last word boundary within max_total
-        truncated = text[:max_total]
-        last_space = truncated.rfind(" ")
-        if last_space > max_total // 2:
-            text = truncated[:last_space].rstrip()
-        else:
-            text = truncated.rstrip()
+    # NEVER truncate/drop words. A slightly long subtitle is readable;
+    # a subtitle with missing words is broken. If text exceeds max_total,
+    # just split it into 2 lines as best we can — the CPS check will
+    # flag it but the viewer can still read it.
 
     if max_lines < 2 or len(text) <= max_cpl:
         return text
@@ -769,9 +767,6 @@ def _wrap_lines(text: str, rules: dict) -> str:
         line1_len = split_pos - 1  # Exclude trailing space
         line2_len = len(text) - split_pos
 
-        # Both lines must fit
-        if line1_len > max_cpl or line2_len > max_cpl:
-            continue
         if line1_len <= 0 or line2_len <= 0:
             continue
 
@@ -789,7 +784,14 @@ def _wrap_lines(text: str, rules: dict) -> str:
         char_before = text[split_pos - 2] if split_pos >= 2 else ""
         punct_bonus = 25 if char_before in ".,;:!?—–-" else 0
 
-        score = balance + pyramid_bonus + word_bonus + punct_bonus
+        # Penalty for lines exceeding max_cpl (soft limit, not hard)
+        overflow_penalty = 0
+        if line1_len > max_cpl:
+            overflow_penalty -= (line1_len - max_cpl) * 3
+        if line2_len > max_cpl:
+            overflow_penalty -= (line2_len - max_cpl) * 3
+
+        score = balance + pyramid_bonus + word_bonus + punct_bonus + overflow_penalty
 
         if score > best_score:
             best_score = score
