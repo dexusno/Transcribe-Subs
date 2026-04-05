@@ -1109,8 +1109,10 @@ def _transcribe_video(
             raise RuntimeError(f"Failed to extract audio from {video_path}")
 
         lang = language_override or whisper_config.get("language")
-        beam_size = whisper_config.get("beam_size", 5)
-        vad_filter = whisper_config.get("vad_filter", True)
+        beam_size = whisper_config.get("beam_size", 10)
+        best_of = whisper_config.get("best_of", 5)
+        patience = whisper_config.get("patience", 2.0)
+        vad_filter = whisper_config.get("vad_filter", False)
         word_timestamps = whisper_config.get("word_timestamps", True)
         condition_on_previous = whisper_config.get("condition_on_previous_text", False)
 
@@ -1123,20 +1125,17 @@ def _transcribe_video(
             "This is a conversation with proper punctuation and capitalisation."
         )
 
-        log.info("  Transcribing with Whisper (lang=%s, vad=%s, word_ts=%s) ...",
-                 lang or "auto", vad_filter, word_timestamps)
+        log.info("  Transcribing with Whisper (lang=%s, beam=%d, best_of=%d) ...",
+                 lang or "auto", beam_size, best_of)
         t0 = time.time()
 
         with _whisper_lock:
             segments, info = whisper_model.transcribe(
                 str(wav_path),
                 beam_size=beam_size,
+                best_of=best_of,
+                patience=patience,
                 vad_filter=vad_filter,
-                vad_parameters=dict(
-                    min_silence_duration_ms=500,   # Don't filter short pauses as silence
-                    speech_pad_ms=300,             # Generous padding to catch quiet starts/ends
-                    min_speech_duration_ms=100,    # Don't filter out short utterances
-                ),
                 word_timestamps=word_timestamps,
                 condition_on_previous_text=condition_on_previous,
                 initial_prompt=initial_prompt,

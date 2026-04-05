@@ -4,7 +4,9 @@
     "device": "cuda",
     "compute_type": "int8",
     "language": null,
-    "beam_size": 5,
+    "beam_size": 10,
+    "best_of": 5,
+    "patience": 2.0,
     "vad_filter": false,
     "word_timestamps": true,
     "condition_on_previous_text": false
