@@ -58,26 +58,28 @@ $PythonScript = Join-Path $ScriptDir "transcribe_subs.py"
 # ── Find conda ───────────────────────────────────────────────────────────────
 
 $CondaBase = $null
-$SearchPaths = @(
-    "$env:USERPROFILE\anaconda3",
-    "$env:USERPROFILE\miniconda3",
-    "C:\ProgramData\anaconda3",
-    "C:\ProgramData\miniconda3"
-)
 
-foreach ($p in $SearchPaths) {
-    if (Test-Path (Join-Path $p "Scripts\activate.bat")) {
-        $CondaBase = $p
-        break
-    }
+# 1. CONDA_EXE env var (set by 'conda init' — most reliable)
+if ($env:CONDA_EXE -and (Test-Path $env:CONDA_EXE)) {
+    $CondaBase = Split-Path (Split-Path $env:CONDA_EXE -Parent) -Parent
 }
 
-# Also try the conda command itself
+# 2. 'conda' on PATH
 if (-not $CondaBase) {
     $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
     if ($condaCmd) {
         $CondaBase = Split-Path (Split-Path $condaCmd.Source -Parent) -Parent
     }
+}
+
+# 3. where.exe fallback
+if (-not $CondaBase) {
+    try {
+        $whereResult = & where.exe conda 2>$null | Select-Object -First 1
+        if ($whereResult -and (Test-Path $whereResult)) {
+            $CondaBase = Split-Path (Split-Path $whereResult -Parent) -Parent
+        }
+    } catch {}
 }
 
 if (-not $CondaBase) {

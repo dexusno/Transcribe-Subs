@@ -245,57 +245,63 @@ if (-not $GpuDetected) {
 Write-Step "Checking system dependencies"
 
 # --- conda ---
+# Discovery order:
+#   1. CONDA_EXE env var (set by 'conda init', most reliable)
+#   2. 'conda' on PATH (via Get-Command)
+#   3. where.exe fallback (searches PATH + App Paths)
+#   4. Not found → offer to install
 $CondaExe = $null
-if (Test-CommandExists "conda") {
-    $CondaExe = (Get-Command conda).Source
-    Write-OK "conda found: $CondaExe"
-} else {
-    $CommonPaths = @(
-        "$env:USERPROFILE\anaconda3\Scripts\conda.exe",
-        "$env:USERPROFILE\miniconda3\Scripts\conda.exe",
-        "C:\ProgramData\anaconda3\Scripts\conda.exe",
-        "C:\ProgramData\miniconda3\Scripts\conda.exe"
-    )
-    foreach ($p in $CommonPaths) {
-        if (Test-Path $p) {
-            $CondaExe = $p
-            Write-OK "conda found: $CondaExe"
-            break
-        }
-    }
-    if (-not $CondaExe) {
-        Write-Warn "conda not found"
-        Write-Info ""
-        Write-Info "Anaconda or Miniconda is required to manage the Python environment."
 
-        if (Ask-YesNo "Would you like to install Miniconda now?" $true) {
-            $installed = Install-WithWinget "Anaconda.Miniconda3" "Miniconda3"
-            if ($installed) {
-                # Try to find it after install
-                $postInstallPaths = @(
-                    "$env:USERPROFILE\miniconda3\Scripts\conda.exe",
-                    "C:\ProgramData\miniconda3\Scripts\conda.exe"
-                )
-                foreach ($p in $postInstallPaths) {
-                    if (Test-Path $p) {
-                        $CondaExe = $p
-                        break
-                    }
-                }
-                if (-not $CondaExe) {
-                    Write-Warn "Miniconda installed but conda not found in expected paths"
-                    Write-Warn "You may need to restart your terminal and run the installer again"
-                    exit 1
-                }
-                Write-OK "conda ready: $CondaExe"
+if ($env:CONDA_EXE -and (Test-Path $env:CONDA_EXE)) {
+    $CondaExe = $env:CONDA_EXE
+    Write-OK "conda found via CONDA_EXE: $CondaExe"
+} elseif (Test-CommandExists "conda") {
+    $CondaExe = (Get-Command conda).Source
+    Write-OK "conda found in PATH: $CondaExe"
+} else {
+    # Last resort: where.exe searches PATH and App Paths registry
+    try {
+        $whereResult = & where.exe conda 2>$null | Select-Object -First 1
+        if ($whereResult -and (Test-Path $whereResult)) {
+            $CondaExe = $whereResult
+            Write-OK "conda found via where.exe: $CondaExe"
+        }
+    } catch {}
+}
+
+if (-not $CondaExe) {
+    Write-Warn "conda not found"
+    Write-Info ""
+    Write-Info "Anaconda or Miniconda is required to manage the Python environment."
+
+    if (Ask-YesNo "Would you like to install Miniconda now?" $true) {
+        $installed = Install-WithWinget "Anaconda.Miniconda3" "Miniconda3"
+        if ($installed) {
+            # After install, refresh env and check again
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                         [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+            if (Test-CommandExists "conda") {
+                $CondaExe = (Get-Command conda).Source
             } else {
-                Write-Err "conda is required. Install manually:`n         https://www.anaconda.com/download"
+                # Check the default miniconda install location
+                $defaultPath = Join-Path $env:USERPROFILE "miniconda3\Scripts\conda.exe"
+                if (Test-Path $defaultPath) { $CondaExe = $defaultPath }
+            }
+
+            if (-not $CondaExe) {
+                Write-Warn "Miniconda installed but conda not found yet"
+                Write-Warn "Restart your terminal and run the installer again"
                 exit 1
             }
+            Write-OK "conda ready: $CondaExe"
         } else {
-            Write-Err "conda is required. Install Anaconda or Miniconda first:`n         https://www.anaconda.com/download"
+            Write-Err "conda is required. Install manually:`n         https://www.anaconda.com/download"
             exit 1
         }
+    } else {
+        Write-Err "conda is required. Install Anaconda or Miniconda first:`n         https://www.anaconda.com/download"
+        exit 1
     }
 }
 
