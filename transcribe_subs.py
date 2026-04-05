@@ -1166,11 +1166,22 @@ def _transcribe_one(
         file_total = job.get("file_total", "?")
         log.info("[TRANSCRIBE %s/%s] %s", file_num, file_total, rel)
 
-        # ── Pass 1: Whisper transcription ────────────────────────────────
-        log.info("  [Pass 1/4] Whisper transcription")
-        raw_srt, detected_lang = _transcribe_video(
-            video_path, whisper_model, whisper_config, language_override
-        )
+        # Path for raw Whisper output (used as cache between runs)
+        raw_srt_path = video_path.with_suffix(".raw.srt")
+
+        # ── Pass 1: Whisper transcription (or reuse cached raw) ──────────
+        if raw_srt_path.exists() and raw_srt_path.stat().st_size > 0:
+            log.info("  [Pass 1/4] Reusing cached Whisper output: %s", raw_srt_path.name)
+            raw_srt = raw_srt_path.read_text(encoding="utf-8").lstrip("\ufeff")
+            detected_lang = "cached"
+        else:
+            log.info("  [Pass 1/4] Whisper transcription")
+            raw_srt, detected_lang = _transcribe_video(
+                video_path, whisper_model, whisper_config, language_override
+            )
+            # Save raw output so Whisper doesn't need to re-run if LLM fails
+            if raw_srt.strip():
+                raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
 
         if not raw_srt.strip():
             log.warning("  [EMPTY] No speech detected: %s", rel)
@@ -1226,6 +1237,14 @@ def _transcribe_one(
         srt_text = _entries_to_srt(entries)
         output_path.write_text(srt_text, encoding="utf-8")
 
+        # Clean up raw cache — polished .srt is the final output
+        try:
+            if raw_srt_path.exists():
+                raw_srt_path.unlink()
+                log.debug("  Cleaned up %s", raw_srt_path.name)
+        except OSError:
+            pass
+
         elapsed = time.time() - t0
         log.info("  [OK] %s (%d entries, %.1fs, lang=%s)",
                  rel, len(entries), elapsed, detected_lang)
@@ -1237,14 +1256,8 @@ def _transcribe_one(
         log.error("  [ERROR] %s: %s", rel, exc)
         with _stats_lock:
             stats["errors"] += 1
-        # Try to save raw Whisper output as fallback
-        try:
-            if "raw_srt" in dir() and raw_srt and raw_srt.strip():
-                fallback = video_path.with_suffix(".raw.srt")
-                fallback.write_text("\ufeff" + raw_srt, encoding="utf-8")
-                log.info("  Fallback raw .srt saved: %s", fallback.name)
-        except Exception:
-            pass
+        # Raw .srt is already saved during Pass 1, so on re-run
+        # Whisper will be skipped and only LLM cleanup retried.
 
 
 def scan_and_transcribe(
@@ -1305,6 +1318,7 @@ def scan_and_transcribe(
     # extraction, LLM calls, and file I/O can overlap between threads.
     workers = max(1, parallel)
     futures = {}
+    completed = 0
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for job in all_jobs:
