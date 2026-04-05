@@ -78,15 +78,21 @@ Open PowerShell and run this one-liner:
 irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex
 ```
 
+By default, the project is installed to `D:\Transcribe_Subs`. To install somewhere else:
+
+```powershell
+$env:TRANSCRIBE_SUBS_DIR = "E:\MyTools\Transcribe_Subs"; irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex
+```
+
 The installer will:
 1. Check for NVIDIA GPU, drivers, and CUDA — offer to install/update if needed
 2. Check for conda, git, ffmpeg — offer to install via winget if missing
-3. Clone the repository to `D:\Transcribe_Subs`
+3. Clone the repository to your chosen directory (default: `D:\Transcribe_Subs`)
 4. Create an isolated `transcribe_subs` conda environment with Python 3.11
 5. Install all Python dependencies (faster-whisper, requests, python-dotenv)
 6. Verify CUDA works end-to-end — automatically fix missing runtime libraries
 7. Pre-download the Whisper `large-v3` model (~3 GB, one-time download)
-8. Create your `.env` file from the template
+8. Create config files from templates (`.env`, `llm_config.json`)
 
 > If the installer installs NVIDIA drivers, you will need to **restart your computer** and run the installer again.
 

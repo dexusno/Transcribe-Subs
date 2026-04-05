@@ -10,6 +10,9 @@
     Can be run as a one-liner from GitHub:
         irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex
 
+    Custom install location:
+        $env:TRANSCRIBE_SUBS_DIR = "E:\MyTools\Transcribe_Subs"; irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex
+
     Or locally after cloning:
         .\install.ps1
 #>
@@ -19,8 +22,14 @@
 $EnvName       = "transcribe_subs"
 $PythonVersion = "3.11"
 $WhisperModel  = "large-v3"
-$ProjectDir    = "D:\Transcribe_Subs"
 $RepoURL       = "https://github.com/dexusno/Transcribe-Subs.git"
+
+# Install location: use env var if set, otherwise default
+if ($env:TRANSCRIBE_SUBS_DIR) {
+    $ProjectDir = $env:TRANSCRIBE_SUBS_DIR
+} else {
+    $ProjectDir = "D:\Transcribe_Subs"
+}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
