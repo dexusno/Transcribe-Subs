@@ -57,4 +57,3 @@ Initial beta release.
 ### Known Limitations
 - Windows only (PowerShell installer; Python script may work on Linux with manual setup)
 - No embedded subtitle muxing into MKV (outputs sidecar .srt only)
-- Whisper model loads into VRAM once and stays loaded for the session
