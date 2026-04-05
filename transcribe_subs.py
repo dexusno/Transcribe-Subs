@@ -58,6 +58,7 @@ TEXT_SUB_CODECS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}
 BITMAP_SUB_CODECS = {"hdmv_pgs_subtitle", "dvd_subtitle", "xsub"}
 
 # Common Whisper hallucination patterns (case-insensitive)
+# Text patterns that are NEVER real dialogue (metadata, formatting artifacts)
 HALLUCINATION_PATTERNS = [
     re.compile(
         r"^\s*("
@@ -68,13 +69,15 @@ HALLUCINATION_PATTERNS = [
         r"amara\.org|opensubtitles|subscene|"
         r"music|music playing|\u266a[\s\u266a]*|"
         r"\.{4,}|_{4,}|-{4,}|"
-        r"we'll be right back|"
         r"\u00a9.*|"                              # © copyright lines
         r"transcript\s+\w+.*"                     # "transcript Emily Beynon" etc.
         r")[.!?,;]*\s*$",
         re.IGNORECASE,
     ),
 ]
+
+# Maximum words per second a human can physically speak (~4 words/sec is fast speech)
+MAX_WORDS_PER_SECOND = 4.5
 
 # Sidecar subtitle extensions to look for
 SIDECAR_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
@@ -860,20 +863,51 @@ def _enforce_timing(entries: List[dict], rules: dict) -> List[dict]:
 
 
 def _remove_hallucinations(entries: List[dict]) -> List[dict]:
-    """Remove entries that match known Whisper hallucination patterns."""
+    """Remove entries that are likely Whisper hallucinations.
+
+    Uses three detection methods:
+    1. Text patterns — known non-dialogue text (subtitles by, ©, etc.)
+    2. Speaking speed — words that can't physically be spoken in the duration
+    3. Isolation — short generic phrases surrounded by long silence
+    """
     cleaned = []
     prev_text = None
 
-    for e in entries:
+    for i, e in enumerate(entries):
         text = e["text"].replace("\n", " ").strip()
-
-        # Check hallucination patterns
+        duration = max(0.01, e["end_sec"] - e["start_sec"])
+        word_count = len(text.split())
         is_hallucination = False
+
+        # 1. Text pattern check (metadata, formatting artifacts)
         for pattern in HALLUCINATION_PATTERNS:
             if pattern.match(text):
                 is_hallucination = True
-                log.debug("  Hallucination removed: %s", text[:50])
+                log.debug("  Hallucination (pattern): %s", text[:50])
                 break
+
+        # 2. Speaking speed check — physically impossible to speak that fast
+        if not is_hallucination and word_count >= 3:
+            words_per_sec = word_count / duration
+            if words_per_sec > MAX_WORDS_PER_SECOND:
+                is_hallucination = True
+                log.debug("  Hallucination (speed %.1f w/s): %s",
+                          words_per_sec, text[:50])
+
+        # 3. Isolation check — short phrase with big gaps before and after
+        #    Whisper hallucinates generic phrases during silence/music
+        if not is_hallucination and word_count <= 6:
+            gap_before = e["start_sec"] - entries[i - 1]["end_sec"] if i > 0 else 999
+            gap_after = entries[i + 1]["start_sec"] - e["end_sec"] if i + 1 < len(entries) else 999
+
+            # Isolated: big silence on BOTH sides of a short phrase
+            # means it appeared in the middle of nothing — very likely hallucinated.
+            # Only trigger if both gaps are large to avoid killing real dialogue
+            # after scene changes.
+            if gap_before > 15 and gap_after > 15:
+                is_hallucination = True
+                log.debug("  Hallucination (isolated, gaps %.1f/%.1fs): %s",
+                          gap_before, gap_after, text[:50])
 
         if is_hallucination:
             continue
