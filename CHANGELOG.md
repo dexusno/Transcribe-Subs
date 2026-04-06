@@ -87,7 +87,8 @@ First stable release. Complete rewrite of the subtitle generation pipeline based
 - Proper nouns remain the main challenge (Whisper limitation)
 
 ### Known Limitations
-- Windows only (PowerShell installer; Python script may work on Linux with manual setup)
+- Proper nouns specific to a show may be misheard by Whisper (character names, place names)
+- Occasional hallucinated short phrases during silence that pass the speed/duration filters
 - Proper nouns specific to a show may be misheard by Whisper (character names, place names)
 - Occasional hallucinated short phrases during silence that pass the speed/duration filters
 

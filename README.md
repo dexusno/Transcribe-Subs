@@ -52,19 +52,17 @@ Polished .srt file
 
 ## Prerequisites
 
-Before running the installer, make sure you have:
-
-| Requirement | Why | Install |
+| Requirement | Windows | Linux (Debian/Ubuntu) |
 |---|---|---|
-| **Windows 10/11** | PowerShell 5.1+ needed for installer | - |
-| **NVIDIA GPU** | Whisper runs on GPU via CUDA (CPU works but is 10-20x slower) | - |
-| **NVIDIA Drivers** | Required for GPU access | [nvidia.com/Download](https://www.nvidia.com/Download/index.aspx) |
-| **Anaconda or Miniconda** | Manages the isolated Python environment | [anaconda.com/download](https://www.anaconda.com/download) |
-| **Git** | Clones the repository | [git-scm.com](https://git-scm.com/download/win) or `winget install Git.Git` |
-| **FFmpeg** | Extracts audio from video files | `winget install ffmpeg` or [ffmpeg.org](https://ffmpeg.org/download.html) |
-| **LLM API key** | LLM processes the transcript into readable subtitles | DeepSeek recommended (see below) |
+| **OS** | Windows 10/11 | Debian 13 / Ubuntu 22.04+ |
+| **NVIDIA GPU** | Optional (CPU works, 10-20x slower) | Optional (CPU works, 10-20x slower) |
+| **NVIDIA Drivers** | [nvidia.com](https://www.nvidia.com/Download/index.aspx) or `winget` | `sudo apt install nvidia-driver` |
+| **Python env** | Anaconda / Miniconda | Python 3.11+ venv (installed by script) |
+| **Git** | `winget install Git.Git` | `sudo apt install git` |
+| **FFmpeg** | `winget install ffmpeg` | `sudo apt install ffmpeg` |
+| **LLM API key** | DeepSeek recommended (see below) | Same |
 
-> The installer checks for system dependencies and offers to install missing ones automatically via `winget`.
+> Both installers check for dependencies and install missing ones automatically.
 
 ---
 
@@ -72,26 +70,34 @@ Before running the installer, make sure you have:
 
 ### Step 1: Run the Installer
 
-Open PowerShell, `cd` to where you want to install, and run:
+**Windows** — open PowerShell, `cd` to where you want to install:
 
 ```powershell
 cd D:\
 irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex
 ```
 
-This creates a `Transcribe_Subs` folder in your current directory (e.g. `D:\Transcribe_Subs`).
+**Linux (Debian/Ubuntu)** — open a terminal, `cd` to where you want to install:
+
+```bash
+cd /opt
+curl -fsSL https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/linux/install.sh | bash
+```
+
+Both create a `Transcribe_Subs` folder in your current directory.
 
 The installer will:
 1. Check for NVIDIA GPU, drivers, and CUDA — offer to install/update if needed
-2. Check for conda, git, ffmpeg — offer to install via winget if missing
+2. Install system dependencies (git, ffmpeg, python3-venv)
 3. Clone the repository into a `Transcribe_Subs` folder in your current directory
-4. Create an isolated `transcribe_subs` conda environment with Python 3.11
+4. Create an isolated Python environment (conda on Windows, venv on Linux)
 5. Install all Python dependencies (faster-whisper, requests, python-dotenv)
 6. Verify CUDA works end-to-end — automatically fix missing runtime libraries
 7. Pre-download the Whisper `large-v3` model (~3 GB, one-time download)
 8. Create config files from templates (`.env`, `llm_config.json`)
 
-> If the installer installs NVIDIA drivers, you will need to **restart your computer** and run the installer again.
+> **Windows:** If the installer installs NVIDIA drivers, you will need to **restart your computer** and run the installer again.
+> **Linux:** NVIDIA drivers require a reboot after installation: `sudo apt install nvidia-driver && sudo reboot`
 
 ### Step 2: Get an LLM API Key
 
@@ -123,21 +129,19 @@ Save the file. That's all the configuration needed.
 
 Navigate to the project directory and use the wrapper script:
 
+**Windows:**
 ```powershell
 cd D:\Transcribe_Subs
-
-# Generate subtitles for all videos in a folder
 .\transcribe_subs.ps1 "D:\Movies\Some Movie"
 ```
 
-The wrapper script automatically activates the conda environment.
-
-**Or activate the environment manually and use Python directly:**
-
-```powershell
-conda activate transcribe_subs
-python transcribe_subs.py "D:\Movies\Some Movie"
+**Linux:**
+```bash
+cd /opt/Transcribe_Subs
+./linux/transcribe_subs.sh "/media/movies/Some Movie"
 ```
+
+The wrapper scripts handle Python environment activation automatically.
 
 ---
 
