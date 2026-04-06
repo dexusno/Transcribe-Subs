@@ -57,20 +57,21 @@ TEXT_SUB_CODECS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}
 # Bitmap subtitle codecs
 BITMAP_SUB_CODECS = {"hdmv_pgs_subtitle", "dvd_subtitle", "xsub"}
 
-# Common Whisper hallucination patterns (case-insensitive)
-# Text patterns that are NEVER real dialogue (metadata, formatting artifacts)
+# Whisper hallucination patterns — ONLY things that can never be real dialogue.
+# Whisper's training data included subtitle metadata, so it sometimes generates
+# credit lines, website names, and formatting artifacts during silence.
+# We do NOT filter words like "subscribe" or "thank you for watching" because
+# characters in a show could actually say those words.
 HALLUCINATION_PATTERNS = [
     re.compile(
         r"^\s*("
-        r"subscribe|like and subscribe|thanks for watching|"
-        r"thank you for watching|please subscribe|"
-        r"subtitles by|captions by|translated by|"
-        r"subtitles made by|captioned by|"
-        r"amara\.org|opensubtitles|subscene|"
-        r"music|music playing|\u266a[\s\u266a]*|"
-        r"\.{4,}|_{4,}|-{4,}|"
-        r"\u00a9.*|"                              # © copyright lines
-        r"transcript\s+\w+.*"                     # "transcript Emily Beynon" etc.
+        r"subtitles by\s.*|captions by\s.*|translated by\s.*|"  # credit lines
+        r"subtitles made by\s.*|captioned by\s.*|"              # credit lines
+        r"amara\.org|opensubtitles|subscene|"                   # website names
+        r"\u266a[\s\u266a]*|"                                   # music note symbols
+        r"\.{4,}|_{4,}|-{4,}|"                                  # formatting artifacts
+        r"\u00a9.*|"                                             # © copyright lines
+        r"transcript\s+\w+.*"                                   # "transcript Emily Beynon"
         r")[.!?,;]*\s*$",
         re.IGNORECASE,
     ),
