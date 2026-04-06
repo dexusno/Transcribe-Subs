@@ -2,7 +2,7 @@
 
 Generate `.srt` subtitle files for videos that have **no subtitles**, using local AI speech-to-text and LLM-powered cleanup.
 
-Whisper runs **locally on your NVIDIA GPU** — no audio leaves your machine. Only the transcribed text is sent to an LLM API for punctuation and cleanup, at a cost of roughly **$0.03 per movie**.
+Whisper runs **locally on your NVIDIA GPU** — no audio leaves your machine. Only the transcribed text is sent to an LLM API for punctuation and cleanup, at a cost of roughly **$0.06 per movie**.
 
 ---
 
@@ -42,10 +42,11 @@ Polished .srt file
 | Step | Cost |
 |------|------|
 | Whisper transcription | Free (local GPU) |
-| LLM cleanup — single movie (2 hrs) | ~$0.03 |
-| LLM cleanup — 10-episode season (45 min each) | ~$0.15 |
+| LLM processing — 45-min episode | ~$0.03 |
+| LLM processing — 2-hr movie | ~$0.06 |
+| LLM processing — 10-episode season (45 min each) | ~$0.30 |
 
-Use `--skip-llm` for completely free operation with raw Whisper output.
+> The `--skip-llm` flag exists for testing but is **not recommended** — raw Whisper output lacks proper punctuation and sentence boundaries, making it difficult to read as subtitles. The LLM passes are essential for usable output.
 
 ---
 
@@ -61,8 +62,9 @@ Before running the installer, make sure you have:
 | **Anaconda or Miniconda** | Manages the isolated Python environment | [anaconda.com/download](https://www.anaconda.com/download) |
 | **Git** | Clones the repository | [git-scm.com](https://git-scm.com/download/win) or `winget install Git.Git` |
 | **FFmpeg** | Extracts audio from video files | `winget install ffmpeg` or [ffmpeg.org](https://ffmpeg.org/download.html) |
+| **DeepSeek API key** | LLM processes the transcript into readable subtitles | [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) |
 
-> The installer checks for all of these and offers to install missing ones automatically via `winget`.
+> The installer checks for system dependencies and offers to install missing ones automatically via `winget`.
 
 ---
 
@@ -93,14 +95,13 @@ The installer will:
 
 ### Step 2: Get a DeepSeek API Key
 
-The LLM cleanup uses DeepSeek Chat, which costs roughly 3 cents per movie.
+The LLM is a required part of the pipeline — it adds punctuation to the raw transcript and fixes speech recognition errors. Without it, the output lacks sentence boundaries and is not usable as subtitles.
 
 1. Go to [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
 2. Create an account (or sign in)
-3. Generate a new API key
-4. Copy the key (it starts with `sk-`)
-
-> You can skip this step and use `--skip-llm` mode, which outputs raw Whisper subtitles without LLM cleanup. No API key needed, completely free.
+3. Add some credit ($2-5 is enough for hundreds of episodes)
+4. Generate a new API key
+5. Copy the key (it starts with `sk-`)
 
 ### Step 3: Configure Your API Key
 

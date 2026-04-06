@@ -74,6 +74,11 @@ First stable release. Complete rewrite of the subtitle generation pipeline based
 - Pre-downloads Whisper model with progress bars
 - Falls back to CPU mode if GPU unavailable
 
+### Cost (based on real DeepSeek usage data)
+- 45-minute episode: ~$0.03 (2-pass LLM processing)
+- 2-hour movie: ~$0.06
+- 10-episode season: ~$0.30
+
 ### Quality Results (tested on BBC drama)
 - ~92% dialogue accuracy compared to official subtitles
 - 86% of entries have clean sentence boundaries
