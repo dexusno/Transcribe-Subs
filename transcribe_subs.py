@@ -1709,6 +1709,15 @@ def _transcribe_one(
 
         # ── Pass 2: LLM punctuation ─────────────────────────────────────
         entries = _parse_srt_entries(raw_srt)
+
+        # Normalise ALL CAPS entries to lowercase before LLM sees them.
+        # Whisper sometimes outputs entire sections in ALL CAPS.
+        # The LLM punctuation pass will add proper capitalisation back.
+        for e in entries:
+            text = e["text"]
+            if text == text.upper() and len(text) > 3:
+                e["text"] = text.lower()
+
         log.info("  [Pass 2/5] LLM punctuation: %d entries ...", len(entries))
 
         try:
