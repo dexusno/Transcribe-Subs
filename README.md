@@ -242,15 +242,15 @@ All settings live in `llm_config.json` in the project directory.
 
 These are inspired by professional subtitle standards. You probably don't need to change them.
 
-| Rule | What it does | How it's enforced |
-|---|---|---|
-| `max_chars_per_line` | Preferred max characters per line | Soft limit — lines may slightly exceed to avoid dropping words |
-| `max_lines` | Maximum lines per subtitle entry | Hard limit |
-| `target_cps` | Target reading speed (characters per second) | Used for character budget calculations |
-| `max_cps` | Maximum reading speed | Logged as warning, not hard-enforced |
-| `min_duration_ms` | Shortest a subtitle can display | Extended to meet minimum when possible |
-| `max_duration_ms` | Longest a subtitle can display | Long entries split in pre-processing |
-| `min_gap_ms` | Minimum gap between consecutive subtitles | Hard-enforced (83ms = 2 frames at 24fps) |
+| Rule | Default | What it does | How it's enforced |
+|---|---|---|---|
+| `max_chars_per_line` | 42 | Preferred max characters per line | Soft limit — lines may slightly exceed to avoid dropping words |
+| `max_lines` | 2 | Maximum lines per subtitle entry | Hard limit |
+| `target_cps` | 17 | Target reading speed (characters per second) | Used for character budget calculations |
+| `max_cps` | 20 | Maximum reading speed | Logged as warning, not hard-enforced |
+| `min_duration_ms` | 1000 | Shortest a subtitle can display (milliseconds) | Extended to meet minimum when possible |
+| `max_duration_ms` | 7000 | Longest a subtitle can display (milliseconds) | Long entries split in pre-processing |
+| `min_gap_ms` | 83 | Minimum gap between consecutive subtitles | Hard-enforced (83ms = 2 frames at 24fps) |
 
 ### LLM Profiles
 
