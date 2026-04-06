@@ -377,7 +377,7 @@ All formatting is done by code, not the LLM:
 **Hallucination detection:**
 - Speaking speed: 3+ words in under 0.5 seconds is physically impossible — removed
 - Speed limit: over 12 words/second is beyond any human speech — removed
-- Text patterns: "subscribe", "thank you for watching", "copyright" etc. — removed
+- Metadata patterns: credit lines ("subtitles by..."), website names, music symbols, copyright lines — removed (only patterns that can never be real dialogue)
 - Consecutive duplicate entries — removed
 
 **Entry merging:** Consecutive short entries (each under 42 chars, under 2.5 seconds, gap < 0.5s) are merged into 2-line entries. This reduces subtitle flickering during rapid dialogue.
