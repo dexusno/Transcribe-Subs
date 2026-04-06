@@ -2,9 +2,7 @@
 
 Generate `.srt` subtitle files for videos that have **no subtitles**, using local AI speech-to-text and LLM-powered cleanup.
 
-Whisper runs **locally on your NVIDIA GPU** — no audio leaves your machine. Only the transcribed text is sent to an LLM API for grammar and formatting cleanup, at a cost of roughly **$0.03 per movie**.
-
-> **Status:** Beta — functional, undergoing real-world testing.
+Whisper runs **locally on your NVIDIA GPU** — no audio leaves your machine. Only the transcribed text is sent to an LLM API for punctuation and cleanup, at a cost of roughly **$0.03 per movie**.
 
 ---
 
@@ -14,19 +12,19 @@ Whisper runs **locally on your NVIDIA GPU** — no audio leaves your machine. On
 Video file
   |
   v
-FFmpeg ── extract audio (16kHz mono)
+Pass 1: Whisper (local GPU) ── speech to text with word-level timestamps
   |
   v
-Whisper (faster-whisper, local GPU) ── speech to text, ~2-3 min per movie
+Pass 2: LLM Punctuation ── add periods, commas, capitals to raw transcript
   |
   v
-Pre-processing ── merge micro-entries, split long entries, calculate character budgets
+Pass 3: Re-segmentation ── rebuild entries at sentence boundaries
   |
   v
-DeepSeek Reasoner (API) ── fix grammar, remove filler words, condense over-budget lines
+Pass 4: LLM Cleanup ── fix misheard words, remove filler
   |
   v
-Post-processing ── Netflix subtitle timing rules, line wrapping, hallucination removal
+Pass 5: Post-processing ── timing rules, merge, line wrap, validate
   |
   v
 Polished .srt file
@@ -36,8 +34,8 @@ Polished .srt file
 - Scans a folder recursively for video files (MKV, MP4, AVI, MOV, WebM)
 - Skips any video that already has subtitles (embedded or sidecar `.srt`)
 - Transcribes speech using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with the `large-v3` model
-- Cleans up the raw transcription via LLM — fixes grammar, removes "um/uh/like", condenses long lines to fit reading speed limits
-- Formats output as a properly timed `.srt` following Netflix subtitle standards (42 chars/line, 17 CPS, 2-line max)
+- Fixes punctuation and misheard words via LLM (DeepSeek Chat or any OpenAI-compatible API)
+- Formats output following Netflix subtitle standards (42 chars/line, 17 CPS, 2-line max)
 
 **What it costs:**
 
@@ -95,7 +93,7 @@ The installer will:
 
 ### Step 2: Get a DeepSeek API Key
 
-The LLM cleanup step uses DeepSeek Reasoner, which costs roughly 3 cents per movie.
+The LLM cleanup uses DeepSeek Chat, which costs roughly 3 cents per movie.
 
 1. Go to [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
 2. Create an account (or sign in)
@@ -106,19 +104,9 @@ The LLM cleanup step uses DeepSeek Reasoner, which costs roughly 3 cents per mov
 
 ### Step 3: Configure Your API Key
 
-Open the `.env` file in the project directory:
-
-```
-D:\Transcribe_Subs\.env
-```
-
-Replace `your-key-here` with your actual API key:
+Open the `.env` file in the project directory and replace `your-key-here` with your actual API key:
 
 ```env
-# Before:
-DEEPSEEK_API_KEY=your-key-here
-
-# After:
 DEEPSEEK_API_KEY=sk-abc123your-actual-key-here
 ```
 
@@ -190,15 +178,15 @@ python transcribe_subs.py "D:\Movies\Some Movie"
 | Option | Description | Default |
 |---|---|---|
 | `folder` (positional) | Path to scan for video files | Required |
-| `-Profile` | LLM profile name from llm_config.json | `deepseek-reasoner` |
-| `-BatchSize` | Subtitle entries per LLM API call | 500 |
+| `-Profile` | LLM profile name from llm_config.json | `deepseek` |
+| `-BatchSize` | Subtitle entries per LLM API call | 150 |
 | `-Parallel` | Concurrent file processing threads | 4 |
 | `-WhisperModel` | Override Whisper model size | `large-v3` |
 | `-Language` | Force language code (e.g. `en`, `es`, `fr`) | auto-detect |
 | `-Limit` | Max number of files to process | unlimited |
 | `-Force` | Re-transcribe even if `.srt` already exists | off |
 | `-DryRun` | Show what would be processed, do nothing | off |
-| `-SkipLLM` | Output raw Whisper `.srt` without LLM cleanup | off |
+| `-SkipLLM` | Output raw Whisper `.whisper` without LLM cleanup | off |
 | `-LogFile` | Also write log output to this file | none |
 
 ---
@@ -215,8 +203,12 @@ All settings live in `llm_config.json` in the project directory.
     "device": "cuda",
     "compute_type": "int8",
     "language": null,
-    "beam_size": 5,
-    "vad_filter": true
+    "beam_size": 10,
+    "best_of": 5,
+    "patience": 2.0,
+    "vad_filter": false,
+    "word_timestamps": true,
+    "condition_on_previous_text": false
 }
 ```
 
@@ -226,8 +218,12 @@ All settings live in `llm_config.json` in the project directory.
 | `device` | Run on GPU or CPU | `cuda`, `cpu` |
 | `compute_type` | Precision (lower = faster, less VRAM) | `int8`, `float16`, `float32` |
 | `language` | Force language or auto-detect | `null` (auto), `"en"`, `"es"`, `"fr"`, etc. |
-| `beam_size` | Beam search width (higher = more accurate, slower) | `1`-`10` (default `5`) |
-| `vad_filter` | Voice Activity Detection — reduces hallucinations on silence | `true`, `false` |
+| `beam_size` | Beam search width (higher = more accurate, slower) | `1`-`15` (default `10`) |
+| `best_of` | Candidates per segment (picks the best) | `1`-`5` (default `5`) |
+| `patience` | Beam search patience (higher = more thorough) | `1.0`-`3.0` (default `2.0`) |
+| `vad_filter` | Voice Activity Detection filter | `false` (default), `true` |
+| `word_timestamps` | Word-level timing for precise segmentation | `true` (default) |
+| `condition_on_previous_text` | Feed previous text as context to next chunk | `false` (default) |
 
 ### Subtitle Rules
 
@@ -259,19 +255,19 @@ These follow Netflix's subtitle standards. You probably don't need to change the
 
 The `profiles` section defines LLM backends. You can use any OpenAI-compatible API.
 
-**Default (DeepSeek Reasoner):**
+**Default (DeepSeek Chat):**
 ```json
-"deepseek-reasoner": {
+"deepseek": {
     "api_url": "https://api.deepseek.com/v1/chat/completions",
-    "model": "deepseek-reasoner",
+    "model": "deepseek-chat",
     "api_key_env": "DEEPSEEK_API_KEY",
-    "batch_size": 500,
+    "batch_size": 150,
     "parallel": 4,
-    "timeout": 300
+    "timeout": 120
 }
 ```
 
-**Included profiles:** `deepseek-reasoner`, `deepseek` (chat), `openai`, `groq`, `openrouter`, `local` (Ollama/LM Studio)
+**Included profiles:** `deepseek`, `openai`, `groq`, `openrouter`, `local` (Ollama/LM Studio)
 
 **To use a different profile**, add its API key to `.env` and pass `-Profile`:
 ```powershell
@@ -302,6 +298,97 @@ The `.srt` file:
 
 ---
 
+## Under the Hood
+
+This section explains the engineering decisions behind the pipeline for anyone interested in how it works or wanting to contribute.
+
+### Why 5 Passes?
+
+Early versions used a simpler pipeline (Whisper -> single LLM pass -> done) but produced poor results: sentence bleeding, dropped words, garbled punctuation. Each problem required a focused solution, leading to the current 5-pass architecture where each step does one thing well.
+
+### Pass 1: Whisper Transcription
+
+**Model:** `large-v3` with INT8 quantization — best accuracy while using only ~3-4 GB VRAM.
+
+**Word-level timestamps:** Instead of trusting Whisper's segment boundaries (which often dump 6-25 seconds of multi-speaker dialogue into a single block), we extract per-word timestamps and rebuild subtitle entries ourselves. This gives us precise control over entry boundaries.
+
+**`condition_on_previous_text=false`:** The default (`true`) feeds previous output as context to the next chunk, which gives better punctuation consistency but causes catastrophic cascading errors — if Whisper mishears a place name once, it repeats the error for the entire file. We tested both extensively. With `false`, each 30-second chunk is independent. We use `initial_prompt` to prime punctuation style instead.
+
+**VAD disabled:** Silero VAD was filtering out 30 minutes of a 57-minute episode — removing quiet dialogue along with silence. Whisper's own silence handling plus our hallucination detection in post-processing is sufficient.
+
+**Quality settings** (`beam_size=10`, `best_of=5`, `patience=2.0`): We prioritise accuracy over speed. This is a one-shot-per-file tool for content with no subtitles at all, so spending extra time is acceptable.
+
+### Pass 2: LLM Punctuation
+
+**The problem:** With `condition_on_previous_text=false`, Whisper produces ~27% of entries with no punctuation at all — entire passages of lowercase text with no periods, commas, or capitals.
+
+**Why not a simple approach?** We tried several:
+- Having the LLM punctuate per-entry with `[N]` indexing — it added false periods at entry boundaries because it couldn't see that sentences continued in the next entry
+- Sending continuous text and remapping by word count — fragile, any word change breaks alignment
+- NLP libraries (spaCy, PySBD) — adds dependencies and doesn't work well on unpunctuated text
+
+**The solution:** Overlapping windows with `[N]` indexing. Each batch includes 20 entries of context overlap from the previous batch. The LLM sees flowing dialogue across entries and can detect where sentences truly end. Only the non-overlapping portion of each response is used, giving us perfect `[N]` mapping back to entries.
+
+**Strict prompt:** The LLM is instructed with emphatic language ("You MUST read ALL lines THOROUGHLY", "Do NOT place a period just because a line ends", "Read AHEAD to find where each sentence actually ends"). Testing showed this produces significantly better results than polite instructions.
+
+### Pass 3: Sentence Re-Segmentation
+
+After punctuation, the code rebuilds entries from scratch at sentence boundaries. This is pure code — no LLM involved.
+
+1. Flatten all entries into a word stream with timestamps
+2. Group words into sentences using punctuation (`.` `!` `?`)
+3. Sentences that fit within limits (84 chars, 7 seconds) become one entry
+4. Long sentences are split at clause boundaries with tiered preference:
+   - Tier 1: comma + conjunction ("..., but") — best
+   - Tier 2: after any comma
+   - Tier 3: before a conjunction without comma
+   - Tier 4: nearest to midpoint — last resort
+
+An abbreviation list (Mr., Mrs., Dr., D.I., etc.) prevents false sentence splits.
+
+**The key insight:** Build sentences first, then fit them into entries. The previous approach (build entries, hope sentences align) caused constant bleeding.
+
+### Pass 4: LLM Cleanup
+
+Now that entries contain clean, properly punctuated sentences, the LLM can focus purely on fixing speech recognition errors:
+
+- **Misheard words:** "lorry ticket" -> "lottery ticket", "tandem gloid" -> "tandem glider" (uses surrounding context to determine the correct word)
+- **Filler words:** um, uh, er, like, you know, I mean
+- **Stuttering:** "it's it's important" -> "it's important"
+- **False starts:** "I was- I went there" -> "I went there"
+
+The prompt explicitly says: "Do NOT remove, shorten, or rephrase anything else. Keep every word." Earlier versions asked the LLM to also condense text to fit character budgets, but LLMs cannot count characters and were dropping words. The condensation was moved to code.
+
+### Pass 5: Post-Processing
+
+All formatting is done by code, not the LLM:
+
+**Hallucination detection:**
+- Speaking speed: 3+ words in under 0.5 seconds is physically impossible — removed
+- Speed limit: over 12 words/second is beyond any human speech — removed
+- Text patterns: "subscribe", "thank you for watching", "copyright" etc. — removed
+- Consecutive duplicate entries — removed
+
+**Entry merging:** Consecutive short entries (each under 42 chars, under 2.5 seconds, gap < 0.5s) are merged into 2-line entries. This reduces subtitle flickering during rapid dialogue.
+
+**Line wrapping:** Entries over 42 characters are split into 2 lines using a scoring system:
+- Balance score (lines should be roughly equal length)
+- Inverted pyramid bonus (bottom line >= top line)
+- Natural break points (conjunctions, prepositions, after punctuation)
+- Overflow penalty (soft limit — a 45-char line is penalised but never truncated, because dropping words is worse than a slightly long line)
+
+**Timing enforcement:** Min 1 second display, max 7 seconds, min 83ms gap between entries, CPS checking.
+
+### Whisper Cache (.whisper files)
+
+Raw Whisper output is saved as a `.whisper` file next to the video. If the LLM pass fails or the user aborts, subsequent runs skip Whisper entirely and go straight to LLM processing. The `.whisper` extension was chosen because it's not a real subtitle format — no media player or scanner will detect it.
+
+### Why Each LLM Pass Does Only One Thing
+
+Through testing, we discovered that LLMs forget complex multi-step instructions after processing the first few entries in a batch. A prompt that says "fix punctuation AND condense to fit budget AND correct misheard words" works on entries 1-5 and degrades from there. Two passes with simple, focused instructions ("add punctuation" then "fix errors") produce dramatically better results across entire batches.
+
+---
+
 ## Troubleshooting
 
 **"No API key found"** — Make sure `.env` exists and has your key. Use `--skip-llm` to test without an API key.
@@ -312,7 +399,7 @@ The `.srt` file:
 
 **Subtitles have wrong language** — Whisper auto-detects language. Force it with `-Language en` (or `es`, `fr`, `de`, etc.).
 
-**Too many hallucinated lines** — Whisper sometimes generates phantom text during silence. The LLM cleanup pass removes most of these. Make sure you're NOT using `--skip-llm`.
+**Place names or character names are wrong** — This is a Whisper limitation. The speech-to-text engine sometimes mishears proper nouns that are uncommon. The LLM cleanup catches many of these using context but can't get them all.
 
 ---
 
