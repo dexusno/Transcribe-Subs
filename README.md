@@ -62,7 +62,7 @@ Before running the installer, make sure you have:
 | **Anaconda or Miniconda** | Manages the isolated Python environment | [anaconda.com/download](https://www.anaconda.com/download) |
 | **Git** | Clones the repository | [git-scm.com](https://git-scm.com/download/win) or `winget install Git.Git` |
 | **FFmpeg** | Extracts audio from video files | `winget install ffmpeg` or [ffmpeg.org](https://ffmpeg.org/download.html) |
-| **DeepSeek API key** | LLM processes the transcript into readable subtitles | [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) |
+| **LLM API key** | LLM processes the transcript into readable subtitles | DeepSeek recommended (see below) |
 
 > The installer checks for system dependencies and offers to install missing ones automatically via `winget`.
 
@@ -93,15 +93,19 @@ The installer will:
 
 > If the installer installs NVIDIA drivers, you will need to **restart your computer** and run the installer again.
 
-### Step 2: Get a DeepSeek API Key
+### Step 2: Get an LLM API Key
 
 The LLM is a required part of the pipeline — it adds punctuation to the raw transcript and fixes speech recognition errors. Without it, the output lacks sentence boundaries and is not usable as subtitles.
+
+**DeepSeek** (recommended) — the pipeline is developed and tested with DeepSeek Chat. It offers the best balance of quality, speed, and cost (~$0.03 per episode):
 
 1. Go to [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
 2. Create an account (or sign in)
 3. Add some credit ($2-5 is enough for hundreds of episodes)
 4. Generate a new API key
 5. Copy the key (it starts with `sk-`)
+
+> **Other API providers** (OpenAI, Groq, OpenRouter) are also supported — see the [LLM Profiles](#llm-profiles) section. Any OpenAI-compatible API will work, though results may vary as the prompts are optimised for DeepSeek.
 
 ### Step 3: Configure Your API Key
 
@@ -271,9 +275,9 @@ The `profiles` section defines LLM backends. You can use any OpenAI-compatible A
 }
 ```
 
-**Included profiles:** `deepseek`, `openai`, `groq`, `openrouter`, `local` (Ollama/LM Studio)
+**Included profiles:** `deepseek` (default, recommended), `openai`, `groq`, `openrouter`, `local` (Ollama/LM Studio)
 
-**To use a different profile**, add its API key to `.env` and pass `-Profile`:
+**To use a different cloud provider**, add its API key to `.env` and pass `-Profile`:
 ```powershell
 .\transcribe_subs.ps1 "D:\Movies" -Profile openai
 ```
@@ -282,6 +286,9 @@ The `profiles` section defines LLM backends. You can use any OpenAI-compatible A
 ```powershell
 .\transcribe_subs.ps1 "D:\Movies" -Profile local
 ```
+
+> [!CAUTION]
+> Local LLMs (Ollama, LM Studio) require very capable hardware and large models (14B+ parameters) to produce acceptable results. Small local models (7B and below) will struggle with the punctuation and error correction tasks and may produce poor quality subtitles. The cloud APIs are strongly recommended unless you have high-end hardware (48GB+ VRAM) and can run models like Qwen 2.5 72B or Llama 3 70B.
 
 ---
 
