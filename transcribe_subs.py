@@ -867,38 +867,103 @@ def _llm_punctuation_pass(
 ) -> List[dict]:
     """LLM Pass 1: Add proper punctuation and capitalisation.
 
-    This is a simple, focused task — the LLM only needs to add
-    punctuation. No word changes, no rephrasing.
+    Sends the full transcript as continuous text (not per-entry),
+    so the LLM has full context for sentence boundary detection.
+    The punctuated text is then mapped back to the original entries
+    using word alignment.
     """
     system_prompt = (
         "/no_think\n"
-        "Add proper punctuation and capitalisation to these speech recognition lines.\n"
-        "\n"
-        "Input: [N] text (may lack punctuation and capitalisation)\n"
-        "Output: [N] corrected text\n"
+        "Add proper punctuation and capitalisation to this transcript.\n"
+        "The text is a continuous transcript from speech recognition.\n"
         "\n"
         "Rules:\n"
         "- Add periods, commas, question marks, exclamation marks where needed\n"
         "- Capitalise the first word of each sentence\n"
         "- Capitalise proper nouns (names, places)\n"
-        "- Do NOT change any words — only add punctuation and fix capitalisation\n"
-        "- Do NOT remove or add words\n"
+        "- Do NOT change, remove, or add any words\n"
         "- Do NOT rephrase anything\n"
-        "- Keep every single word exactly as it is\n"
-        "- Return ONLY numbered entries, no explanations"
+        "- Return ONLY the punctuated text, no explanations"
     )
 
-    texts = [e["text"].replace("\n", " ").strip() for e in entries]
-    fixed = _llm_process_texts(
-        texts, system_prompt, batch_size, "Punctuation",
-        api_url=api_url, model=model, api_key=api_key, api_timeout=api_timeout,
-    )
+    # Extract all text as continuous blocks for LLM context
+    # Send in large chunks (~3000 words) for maximum context
+    WORDS_PER_CHUNK = 3000
 
+    all_texts = [e["text"].replace("\n", " ").strip() for e in entries]
+    all_words_flat = []
+    entry_word_counts = []
+    for t in all_texts:
+        words = t.split()
+        entry_word_counts.append(len(words))
+        all_words_flat.extend(words)
+
+    total_words = len(all_words_flat)
+    punctuated_words = []
+
+    # Process in large chunks
+    for chunk_start in range(0, total_words, WORDS_PER_CHUNK):
+        chunk_words = all_words_flat[chunk_start: chunk_start + WORDS_PER_CHUNK]
+        chunk_text = " ".join(chunk_words)
+
+        chunk_num = (chunk_start // WORDS_PER_CHUNK) + 1
+        total_chunks = math.ceil(total_words / WORDS_PER_CHUNK)
+
+        log.info("  Punctuation: sending chunk %d/%d (%d words) ...",
+                 chunk_num, total_chunks, len(chunk_words))
+        t_start = time.time()
+
+        headers = {"Content-Type": "application/json"}
+        if api_key and api_key.lower() != "none":
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": chunk_text},
+            ],
+            "temperature": 0.3,
+        }
+
+        try:
+            resp = requests.post(api_url, headers=headers, json=body, timeout=api_timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            result_text = data["choices"][0]["message"].get("content", "").strip()
+
+            log.info("  Punctuation: chunk %d/%d completed in %.1fs",
+                     chunk_num, total_chunks, time.time() - t_start)
+
+            # The LLM returns punctuated text — split back into words
+            result_words = result_text.split()
+            punctuated_words.extend(result_words)
+
+        except Exception as exc:
+            log.warning("  Punctuation chunk %d failed: %s — using original", chunk_num, exc)
+            punctuated_words.extend(chunk_words)
+
+    # Map punctuated words back to entries using original word counts.
+    # The LLM may have slightly different word count (punctuation can
+    # attach to or detach from words), so we do best-effort alignment.
     result = []
-    for entry, new_text in zip(entries, fixed):
+    word_idx = 0
+
+    for entry, orig_word_count in zip(entries, entry_word_counts):
+        if orig_word_count == 0:
+            result.append(dict(entry))
+            continue
+
+        # Take the same number of words from punctuated output
+        end_idx = min(word_idx + orig_word_count, len(punctuated_words))
+        new_words = punctuated_words[word_idx:end_idx]
+        word_idx = end_idx
+
         new_entry = dict(entry)
-        new_entry["text"] = _nfc(new_text)
+        if new_words:
+            new_entry["text"] = _nfc(" ".join(new_words))
         result.append(new_entry)
+
     return result
 
 
