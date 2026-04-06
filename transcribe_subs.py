@@ -532,33 +532,398 @@ def _split_long_entries(entries: List[dict], max_duration_ms: int) -> List[dict]
 
 
 def _preprocess(entries: List[dict], rules: dict) -> List[dict]:
-    """Orchestrate pre-processing: merge short, split long, attach budgets."""
+    """Orchestrate pre-processing: merge short, split long."""
     entries = _merge_short_entries(entries, rules["min_duration_ms"])
     entries = _split_long_entries(entries, rules["max_duration_ms"])
-
-    # Attach character budget to each entry
-    for e in entries:
-        duration = e["end_sec"] - e["start_sec"]
-        e["budget"] = _calculate_char_budget(duration, rules["target_cps"])
-
     return entries
 
 
+# Abbreviations that end with a period but are NOT sentence endings
+_ABBREVIATIONS = {
+    "mr.", "mrs.", "ms.", "dr.", "st.", "sr.", "jr.",
+    "a.m.", "p.m.", "etc.", "vs.", "vol.", "dept.",
+    "sgt.", "cpl.", "pvt.", "lt.", "col.", "gen.",
+    "prof.", "rev.", "d.i.", "d.s.", "c.s.o.", "p.c.",
+}
+
+
+def _resegment_by_sentences(entries: List[dict], rules: dict) -> List[dict]:
+    """Re-segment entries at sentence boundaries.
+
+    After the LLM punctuation pass, entries have proper punctuation.
+    This function rebuilds entries so each contains complete sentences,
+    splitting at . ! ? boundaries. Long sentences are split at clause
+    boundaries (commas + conjunctions).
+
+    This eliminates "sentence bleeding" where a sentence starts in one
+    entry and finishes in the next.
+    """
+    max_chars = rules["max_chars_per_line"] * rules["max_lines"]  # 84
+    max_dur = rules["max_duration_ms"] / 1000.0  # 7.0
+
+    # Step 1: Flatten all entries into a stream of (word, start_sec, end_sec)
+    # We need to estimate per-word timing from the entry timestamps.
+    word_stream = []
+    for e in entries:
+        text = e["text"].replace("\n", " ").strip()
+        words = text.split()
+        if not words:
+            continue
+
+        e_start = e["start_sec"]
+        e_end = e["end_sec"]
+        e_duration = max(0.01, e_end - e_start)
+
+        # Distribute time across words proportionally by character count
+        total_chars = max(1, sum(len(w) for w in words))
+        t = e_start
+        for w in words:
+            w_duration = e_duration * (len(w) / total_chars)
+            word_stream.append({
+                "word": w,
+                "start": t,
+                "end": t + w_duration,
+            })
+            t += w_duration
+
+    if not word_stream:
+        return entries
+
+    # Step 2: Build sentences from the word stream using punctuation
+    sentences = []
+    current_words = []
+    current_start = word_stream[0]["start"]
+
+    for i, w in enumerate(word_stream):
+        current_words.append(w)
+        word_text = w["word"]
+
+        # Check if this word ends a sentence
+        is_sentence_end = False
+        if word_text.endswith((".", "!", "?")):
+            # Check it's not an abbreviation
+            lower = word_text.lower()
+            if lower not in _ABBREVIATIONS:
+                is_sentence_end = True
+
+        # Also treat end of stream as sentence end
+        if i == len(word_stream) - 1:
+            is_sentence_end = True
+
+        if is_sentence_end and current_words:
+            sentence_text = " ".join(cw["word"] for cw in current_words)
+            sentences.append({
+                "text": sentence_text,
+                "start_sec": current_start,
+                "end_sec": w["end"],
+                "words": list(current_words),
+            })
+            current_words = []
+            if i + 1 < len(word_stream):
+                current_start = word_stream[i + 1]["start"]
+
+    # Step 3: Build subtitle entries from sentences
+    result = []
+
+    for sent in sentences:
+        text = sent["text"]
+        duration = sent["end_sec"] - sent["start_sec"]
+
+        # Sentence fits in one entry? Done.
+        if len(text) <= max_chars and duration <= max_dur:
+            result.append({
+                "start_sec": sent["start_sec"],
+                "end_sec": sent["end_sec"],
+                "text": text,
+            })
+            continue
+
+        # Sentence too long — split at clause boundaries
+        words = sent["words"]
+        _split_sentence_into_entries(words, result, max_chars, max_dur)
+
+    # Re-index and add timestamps
+    for i, e in enumerate(result, 1):
+        e["index"] = i
+        e["start_ts"] = _seconds_to_srt_time(e["start_sec"])
+        e["end_ts"] = _seconds_to_srt_time(e["end_sec"])
+
+    return result
+
+
+# Conjunctions and relative pronouns — good places to split clauses
+_CLAUSE_WORDS = {
+    "but", "and", "or", "so", "because", "since", "when", "while",
+    "although", "though", "if", "then", "that", "which", "who",
+    "where", "whereas", "unless", "until", "after", "before",
+}
+
+
+def _split_sentence_into_entries(
+    words: List[dict],
+    result: List[dict],
+    max_chars: int,
+    max_dur: float,
+):
+    """Split a long sentence into multiple entries at clause boundaries.
+
+    Split preference (highest to lowest):
+    1. Before a conjunction/relative pronoun after a comma
+    2. After a comma
+    3. Before a conjunction without comma
+    4. Nearest to midpoint (last resort)
+    """
+    if not words:
+        return
+
+    full_text = " ".join(w["word"] for w in words)
+
+    # If it fits now (after earlier splitting), just add it
+    duration = words[-1]["end"] - words[0]["start"]
+    if len(full_text) <= max_chars and duration <= max_dur:
+        result.append({
+            "start_sec": words[0]["start"],
+            "end_sec": words[-1]["end"],
+            "text": full_text,
+        })
+        return
+
+    # Find best split point
+    best_idx = None
+    best_tier = 99
+
+    midpoint = len(full_text) / 2
+    char_pos = 0
+
+    for idx in range(1, len(words)):
+        word_lower = words[idx]["word"].lower().rstrip(".,;:!?")
+        prev_word = words[idx - 1]["word"]
+
+        # Calculate character position of this split
+        char_pos = len(" ".join(w["word"] for w in words[:idx]))
+        left_len = char_pos
+        right_len = len(full_text) - char_pos - 1
+
+        # Both halves must be non-trivial
+        if left_len < 10 or right_len < 10:
+            continue
+
+        # Tier 1: Comma + conjunction (best)
+        if prev_word.endswith(",") and word_lower in _CLAUSE_WORDS:
+            tier = 1
+        # Tier 2: After comma
+        elif prev_word.endswith(","):
+            tier = 2
+        # Tier 3: Before conjunction (no comma)
+        elif word_lower in _CLAUSE_WORDS:
+            tier = 3
+        else:
+            continue  # Skip non-boundary positions for tiers 1-3
+
+        # Among same tier, prefer closer to midpoint
+        if tier < best_tier or (tier == best_tier and
+                abs(char_pos - midpoint) < abs(
+                    len(" ".join(w["word"] for w in words[:best_idx])) - midpoint
+                )):
+            best_tier = tier
+            best_idx = idx
+
+    # Tier 4 fallback: nearest space to midpoint
+    if best_idx is None:
+        char_pos = 0
+        best_dist = 999
+        for idx in range(1, len(words)):
+            char_pos = len(" ".join(w["word"] for w in words[:idx]))
+            dist = abs(char_pos - midpoint)
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+
+    if best_idx is None:
+        best_idx = len(words) // 2
+
+    # Recurse on each half
+    _split_sentence_into_entries(words[:best_idx], result, max_chars, max_dur)
+    _split_sentence_into_entries(words[best_idx:], result, max_chars, max_dur)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# LLM Cleanup Pass
+# LLM Passes
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_cleanup_system_prompt() -> str:
-    """Build the system prompt for subtitle cleanup via LLM."""
-    return (
+# Regex to parse [N] markers from LLM response
+_RESPONSE_RE = re.compile(r"\[(\d+)\]\s*(.*?)(?=\n\[\d+\]|\Z)", re.DOTALL)
+
+
+def _llm_process_texts(
+    texts: List[str],
+    system_prompt: str,
+    batch_size: int,
+    pass_name: str,
+    *,
+    api_url: str,
+    model: str,
+    api_key: str,
+    api_timeout: int = 120,
+) -> List[str]:
+    """Generic LLM text processor using [N] indexing pattern.
+
+    Sends texts in batches with [N] numbering, parses [N] responses.
+    Falls back to original text on failure. Used for both punctuation
+    and cleanup passes.
+    """
+    if not texts:
+        return texts
+
+    total = len(texts)
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    headers = {"Content-Type": "application/json"}
+    if api_key and api_key.lower() != "none":
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    result_texts: List[str] = []
+
+    for i in range(0, total, max(1, batch_size)):
+        batch = texts[i: i + batch_size]
+
+        numbered = [f"[{j}] {text}" for j, text in enumerate(batch)]
+        user_msg = "\n".join(numbered)
+
+        body: dict = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            "temperature": 0.3,
+        }
+
+        max_retries = 2
+        batch_success = False
+        batch_num = (i // max(1, batch_size)) + 1
+        total_batches = math.ceil(total / max(1, batch_size))
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                log.info("  %s: sending batch %d/%d (%d entries) ...",
+                         pass_name, batch_num, total_batches, len(batch))
+                t_batch = time.time()
+
+                resp = requests.post(
+                    api_url, headers=headers, json=body, timeout=api_timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                log.info("  %s: batch %d/%d completed in %.1fs",
+                         pass_name, batch_num, total_batches, time.time() - t_batch)
+
+                usage = data.get("usage", {})
+                for k in total_usage:
+                    total_usage[k] += usage.get(k, 0)
+
+                content = data["choices"][0]["message"].get("content", "").strip()
+
+                results: Dict[int, str] = {}
+                for match in _RESPONSE_RE.finditer(content):
+                    idx = int(match.group(1))
+                    text = match.group(2).strip()
+                    results[idx] = text
+
+                for j in range(len(batch)):
+                    result_texts.append(results.get(j, batch[j]))
+
+                batch_success = True
+                break
+
+            except Exception as exc:
+                if attempt < max_retries:
+                    log.warning("  %s: batch %d attempt %d failed: %s — retrying ...",
+                                pass_name, batch_num, attempt, exc)
+                    time.sleep(2)
+                else:
+                    log.warning("  %s: batch %d failed after %d attempts: %s — using original",
+                                pass_name, batch_num, max_retries, exc)
+
+        if not batch_success:
+            result_texts.extend(batch)
+
+    log.debug("  %s usage — prompt: %d, completion: %d, total: %d",
+              pass_name, total_usage["prompt_tokens"],
+              total_usage["completion_tokens"], total_usage["total_tokens"])
+
+    return result_texts
+
+
+def _llm_punctuation_pass(
+    entries: List[dict],
+    batch_size: int,
+    *,
+    api_url: str,
+    model: str,
+    api_key: str,
+    api_timeout: int = 120,
+) -> List[dict]:
+    """LLM Pass 1: Add proper punctuation and capitalisation.
+
+    This is a simple, focused task — the LLM only needs to add
+    punctuation. No word changes, no rephrasing.
+    """
+    system_prompt = (
         "/no_think\n"
-        "You are a subtitle editor. Clean up speech recognition output.\n"
+        "Add proper punctuation and capitalisation to these speech recognition lines.\n"
+        "\n"
+        "Input: [N] text (may lack punctuation and capitalisation)\n"
+        "Output: [N] corrected text\n"
+        "\n"
+        "Rules:\n"
+        "- Add periods, commas, question marks, exclamation marks where needed\n"
+        "- Capitalise the first word of each sentence\n"
+        "- Capitalise proper nouns (names, places)\n"
+        "- Do NOT change any words — only add punctuation and fix capitalisation\n"
+        "- Do NOT remove or add words\n"
+        "- Do NOT rephrase anything\n"
+        "- Keep every single word exactly as it is\n"
+        "- Return ONLY numbered entries, no explanations"
+    )
+
+    texts = [e["text"].replace("\n", " ").strip() for e in entries]
+    fixed = _llm_process_texts(
+        texts, system_prompt, batch_size, "Punctuation",
+        api_url=api_url, model=model, api_key=api_key, api_timeout=api_timeout,
+    )
+
+    result = []
+    for entry, new_text in zip(entries, fixed):
+        new_entry = dict(entry)
+        new_entry["text"] = _nfc(new_text)
+        result.append(new_entry)
+    return result
+
+
+def _llm_cleanup_pass(
+    entries: List[dict],
+    batch_size: int,
+    *,
+    api_url: str,
+    model: str,
+    api_key: str,
+    api_timeout: int = 120,
+) -> List[dict]:
+    """LLM Pass 2: Fix misheard words, remove filler.
+
+    Runs AFTER sentence re-segmentation, so each entry is a clean
+    sentence or clause. The LLM only needs to fix word errors.
+    """
+    system_prompt = (
+        "/no_think\n"
+        "Fix speech recognition errors in these subtitle lines.\n"
         "\n"
         "Input: [N] text\n"
         "Output: [N] corrected text\n"
         "\n"
         "Fix these issues:\n"
-        "- Spelling, grammar, punctuation, capitalisation errors\n"
         "- Misheard words: use context to figure out the correct word\n"
         "  (e.g. \"lorry ticket\" should be \"lottery ticket\")\n"
         "- Filler words: remove um, uh, er, like, you know, I mean, basically\n"
@@ -567,157 +932,32 @@ def _build_cleanup_system_prompt() -> str:
         "\n"
         "IMPORTANT: Do NOT remove, shorten, or rephrase anything else.\n"
         "Keep every word that is not a filler, stutter, or error.\n"
-        "Do not summarise or condense. Preserve the FULL dialogue.\n"
-        "\n"
-        "Preserve speaker tone and character voice.\n"
+        "Do not change punctuation or capitalisation (already correct).\n"
+        "Preserve the FULL dialogue.\n"
         "Preserve __TAG0__, __TAG1__ placeholders exactly.\n"
         "Return ONLY numbered entries. No explanations."
     )
 
-
-# Regex to parse [N] markers from LLM response
-_RESPONSE_RE = re.compile(r"\[(\d+)\]\s*(.*?)(?=\n\[\d+\]|\Z)", re.DOTALL)
-
-
-def _llm_cleanup_batched(
-    entries: List[dict],
-    batch_size: int = 500,
-    progress_cb: Optional[Callable[[int, int], None]] = None,
-    *,
-    api_url: str,
-    model: str,
-    api_key: str,
-    api_timeout: int = 300,
-) -> List[dict]:
-    """Clean up subtitle entries via an OpenAI-compatible LLM API.
-
-    Sends batches of entries with character budgets. Returns entries with
-    updated text fields. Works with any OpenAI-compatible API.
-    """
-    if not entries:
-        return entries
-
-    # We use deepseek-reasoner for its 64K output limit, but disable reasoning
-    # with /no_think in the prompt. This makes it behave like a fast chat model
-    # with a large output window.
-    system_prompt = _build_cleanup_system_prompt()
-
     # Protect tags
-    protected_pairs: List[Tuple[dict, Dict[str, str]]] = []
-    prepped_texts: List[str] = []
+    texts = []
+    tag_maps = []
     for e in entries:
         text, tags = _protect_tags(e["text"].replace("\n", " ").strip())
-        protected_pairs.append((e, tags))
-        prepped_texts.append(text)
+        texts.append(text)
+        tag_maps.append(tags)
 
-    total = len(entries)
-    done = 0
-    if progress_cb:
-        progress_cb(total, done)
+    fixed = _llm_process_texts(
+        texts, system_prompt, batch_size, "Cleanup",
+        api_url=api_url, model=model, api_key=api_key, api_timeout=api_timeout,
+    )
 
-    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-
-    headers = {"Content-Type": "application/json"}
-    if api_key and api_key.lower() != "none":
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    cleaned_texts: List[str] = []
-
-    for i in range(0, total, max(1, batch_size)):
-        batch_entries = entries[i: i + batch_size]
-        batch_texts = prepped_texts[i: i + batch_size]
-
-        # Build numbered user message with budgets: [N|budget] text
-        numbered = []
-        for j, (e, text) in enumerate(zip(batch_entries, batch_texts)):
-            numbered.append(f"[{j}] {text}")
-        user_msg = "\n".join(numbered)
-
-        # Build request body
-        body: dict = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg},
-            ],
-        }
-        body["temperature"] = 0.3
-
-        # Retry once on failure (timeout, server error, etc.)
-        max_retries = 2
-        batch_success = False
-        batch_num = (i // max(1, batch_size)) + 1
-        total_batches = math.ceil(total / max(1, batch_size))
-        for attempt in range(1, max_retries + 1):
-            try:
-                log.info("  Sending batch %d/%d (%d entries) to LLM — waiting for response ...",
-                         batch_num, total_batches, len(batch_entries))
-                t_batch = time.time()
-
-                resp = requests.post(
-                    api_url,
-                    headers=headers,
-                    json=body,
-                    timeout=api_timeout,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-                log.info("  Batch %d/%d completed in %.1fs",
-                         batch_num, total_batches, time.time() - t_batch)
-
-                # Accumulate usage
-                usage = data.get("usage", {})
-                for k in total_usage:
-                    total_usage[k] += usage.get(k, 0)
-
-                msg = data["choices"][0]["message"]
-                translated_text = msg.get("content", "").strip()
-
-                # Parse [N] markers from response
-                results: Dict[int, str] = {}
-                for match in _RESPONSE_RE.finditer(translated_text):
-                    idx = int(match.group(1))
-                    text = match.group(2).strip()
-                    results[idx] = text
-
-                # Map results back, fallback to original on missing
-                for j in range(len(batch_texts)):
-                    cleaned_texts.append(results.get(j, batch_texts[j]))
-
-                batch_success = True
-                break  # Success — don't retry
-
-            except Exception as exc:
-                if attempt < max_retries:
-                    log.warning("  LLM batch %d-%d attempt %d failed: %s — retrying ...",
-                                i, i + len(batch_entries), attempt, exc)
-                    time.sleep(2)  # Brief pause before retry
-                else:
-                    log.warning("  LLM batch %d-%d failed after %d attempts: %s — using raw text",
-                                i, i + len(batch_entries), max_retries, exc)
-
-        if not batch_success:
-            # Fallback: keep original text for this batch
-            cleaned_texts.extend(batch_texts)
-
-        done = min(total, done + len(batch_entries))
-        if progress_cb:
-            progress_cb(total, done)
-
-    # Restore tags, normalize, and update entries
-    result_entries = []
-    for (entry, tags), cleaned in zip(protected_pairs, cleaned_texts):
-        restored = _restore_tags(cleaned, tags)
+    result = []
+    for entry, new_text, tags in zip(entries, fixed, tag_maps):
+        restored = _restore_tags(new_text, tags)
         new_entry = dict(entry)
         new_entry["text"] = _nfc(restored)
-        result_entries.append(new_entry)
-
-    log.debug("  LLM usage — prompt: %d, completion: %d, total: %d",
-              total_usage["prompt_tokens"], total_usage["completion_tokens"],
-              total_usage["total_tokens"])
-
-    return result_entries
+        result.append(new_entry)
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1417,39 +1657,44 @@ def _transcribe_one(
                 stats["transcribed"] += 1
             return
 
-        # ── Pass 2: Pre-process ──────────────────────────────────────────
+        # ── Pass 2: LLM punctuation ─────────────────────────────────────
         entries = _parse_srt_entries(raw_srt)
-        log.info("  [Pass 2/4] Pre-processing %d entries ...", len(entries))
-        entries = _preprocess(entries, rules)
-        log.info("  After pre-processing: %d entries", len(entries))
-
-        # ── Pass 3: LLM cleanup ─────────────────────────────────────────
-        num_batches = max(1, math.ceil(len(entries) / batch_size))
-        log.info("  [Pass 3/4] LLM cleanup: %d entries in %d batch(es) ...", len(entries), num_batches)
-
-        def _progress(total, done):
-            if done > 0 and done < total:
-                batch_num = math.ceil(done / batch_size)
-                log.info("  LLM cleanup: batch %d/%d (%d/%d entries)",
-                         batch_num, num_batches, done, total)
+        log.info("  [Pass 2/5] LLM punctuation: %d entries ...", len(entries))
 
         try:
-            entries = _llm_cleanup_batched(
+            entries = _llm_punctuation_pass(
                 entries,
                 batch_size=batch_size,
-                progress_cb=_progress,
                 api_url=profile["api_url"],
                 model=profile["model"],
                 api_key=profile["api_key"],
                 api_timeout=profile["timeout"],
             )
         except Exception as exc:
-            log.warning("  LLM cleanup failed: %s — saving raw Whisper output", exc)
-            # Re-parse raw (pre-processed entries may be partially updated)
-            entries = _parse_srt_entries(raw_srt)
+            log.warning("  Punctuation pass failed: %s — continuing with raw text", exc)
 
-        # ── Pass 4: Post-process ─────────────────────────────────────────
-        log.info("  [Pass 4/4] Post-processing (timing, line wrapping, validation)")
+        # ── Pass 3: Sentence re-segmentation ────────────────────────────
+        log.info("  [Pass 3/5] Re-segmenting at sentence boundaries ...")
+        entries = _resegment_by_sentences(entries, rules)
+        log.info("  After re-segmentation: %d entries", len(entries))
+
+        # ── Pass 4: LLM cleanup ─────────────────────────────────────────
+        log.info("  [Pass 4/5] LLM cleanup: fixing misheard words, filler ...")
+
+        try:
+            entries = _llm_cleanup_pass(
+                entries,
+                batch_size=batch_size,
+                api_url=profile["api_url"],
+                model=profile["model"],
+                api_key=profile["api_key"],
+                api_timeout=profile["timeout"],
+            )
+        except Exception as exc:
+            log.warning("  LLM cleanup failed: %s — continuing with punctuated text", exc)
+
+        # ── Pass 5: Post-process ─────────────────────────────────────────
+        log.info("  [Pass 5/5] Post-processing (timing, line wrapping, validation)")
         entries = _postprocess(entries, rules)
 
         # ── Write output ─────────────────────────────────────────────────
