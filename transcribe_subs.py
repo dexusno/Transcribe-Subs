@@ -867,103 +867,87 @@ def _llm_punctuation_pass(
 ) -> List[dict]:
     """LLM Pass 1: Add proper punctuation and capitalisation.
 
-    Sends the full transcript as continuous text (not per-entry),
-    so the LLM has full context for sentence boundary detection.
-    The punctuated text is then mapped back to the original entries
-    using word alignment.
+    Uses overlapping windows of [N]-indexed entries so the LLM sees
+    flowing context across entries. Overlap entries provide context
+    but only the non-overlapping portion of each response is used.
+    Uses larger batches than the cleanup pass for more context.
     """
     system_prompt = (
         "/no_think\n"
-        "Add proper punctuation and capitalisation to this transcript.\n"
-        "The text is a continuous transcript from speech recognition.\n"
+        "You are a professional transcript editor.\n"
+        "You MUST add correct punctuation and capitalisation to these lines.\n"
         "\n"
-        "Rules:\n"
-        "- Add periods, commas, question marks, exclamation marks where needed\n"
-        "- Capitalise the first word of each sentence\n"
-        "- Capitalise proper nouns (names, places)\n"
-        "- Do NOT change, remove, or add any words\n"
-        "- Do NOT rephrase anything\n"
-        "- Return ONLY the punctuated text, no explanations"
+        "CRITICAL INSTRUCTIONS:\n"
+        "- You MUST read ALL the lines THOROUGHLY before making any changes.\n"
+        "- These lines are CONTINUOUS DIALOGUE — text flows from one line to\n"
+        "  the next. A sentence that starts in [3] may end in [4] or [5].\n"
+        "- You MUST read AHEAD to find where each sentence actually ends\n"
+        "  before placing a period.\n"
+        "- Do NOT place a period just because a line ends. The sentence may\n"
+        "  continue on the next line.\n"
+        "- ONLY place periods, question marks, or exclamation marks where\n"
+        "  a sentence TRULY ends.\n"
+        "- Add commas where there are natural pauses within a sentence.\n"
+        "- Capitalise the first word of each new sentence.\n"
+        "- Capitalise proper nouns (names of people, places).\n"
+        "\n"
+        "You MUST NOT change, remove, add, or rephrase ANY words.\n"
+        "ONLY add punctuation and fix capitalisation.\n"
+        "Every single word MUST remain exactly as it is.\n"
+        "\n"
+        "Input: [N] text\n"
+        "Output: [N] text with punctuation added\n"
+        "Return ONLY the numbered lines. No explanations."
     )
 
-    # Extract all text as continuous blocks for LLM context
-    # Send in large chunks (~3000 words) for maximum context
-    WORDS_PER_CHUNK = 3000
+    # Use larger batches for punctuation — more context helps.
+    # Overlap 20 entries between batches for cross-boundary context.
+    PUNCT_BATCH = max(batch_size, 250)
+    OVERLAP = 20
 
-    all_texts = [e["text"].replace("\n", " ").strip() for e in entries]
-    all_words_flat = []
-    entry_word_counts = []
-    for t in all_texts:
-        words = t.split()
-        entry_word_counts.append(len(words))
-        all_words_flat.extend(words)
+    texts = [e["text"].replace("\n", " ").strip() for e in entries]
+    total = len(texts)
 
-    total_words = len(all_words_flat)
-    punctuated_words = []
+    # Result array — will be filled in chunks, overlap portions discarded
+    result_texts = list(texts)  # Start with originals as fallback
 
-    # Process in large chunks
-    for chunk_start in range(0, total_words, WORDS_PER_CHUNK):
-        chunk_words = all_words_flat[chunk_start: chunk_start + WORDS_PER_CHUNK]
-        chunk_text = " ".join(chunk_words)
+    chunk_start = 0
+    chunk_num = 0
 
-        chunk_num = (chunk_start // WORDS_PER_CHUNK) + 1
-        total_chunks = math.ceil(total_words / WORDS_PER_CHUNK)
+    while chunk_start < total:
+        chunk_num += 1
+        chunk_end = min(chunk_start + PUNCT_BATCH, total)
 
-        log.info("  Punctuation: sending chunk %d/%d (%d words) ...",
-                 chunk_num, total_chunks, len(chunk_words))
-        t_start = time.time()
+        # Add overlap from previous context (but don't use those results)
+        context_start = max(0, chunk_start - OVERLAP)
+        batch_texts = texts[context_start: chunk_end]
 
-        headers = {"Content-Type": "application/json"}
-        if api_key and api_key.lower() != "none":
-            headers["Authorization"] = f"Bearer {api_key}"
+        # The offset tells us where the "real" entries start in this batch
+        real_offset = chunk_start - context_start
 
-        body = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": chunk_text},
-            ],
-            "temperature": 0.3,
-        }
+        total_chunks = math.ceil(total / PUNCT_BATCH)
+        log.info("  Punctuation: batch %d/%d (entries %d-%d, +%d context) ...",
+                 chunk_num, total_chunks, chunk_start, chunk_end - 1, real_offset)
 
-        try:
-            resp = requests.post(api_url, headers=headers, json=body, timeout=api_timeout)
-            resp.raise_for_status()
-            data = resp.json()
-            result_text = data["choices"][0]["message"].get("content", "").strip()
+        fixed = _llm_process_texts(
+            batch_texts, system_prompt, len(batch_texts), f"Punctuation",
+            api_url=api_url, model=model, api_key=api_key, api_timeout=api_timeout,
+        )
 
-            log.info("  Punctuation: chunk %d/%d completed in %.1fs",
-                     chunk_num, total_chunks, time.time() - t_start)
+        # Only use results from the non-overlap portion
+        for i in range(real_offset, len(fixed)):
+            global_idx = context_start + i
+            if global_idx < total:
+                result_texts[global_idx] = fixed[i]
 
-            # The LLM returns punctuated text — split back into words
-            result_words = result_text.split()
-            punctuated_words.extend(result_words)
+        chunk_start = chunk_end
 
-        except Exception as exc:
-            log.warning("  Punctuation chunk %d failed: %s — using original", chunk_num, exc)
-            punctuated_words.extend(chunk_words)
-
-    # Map punctuated words back to entries using original word counts.
-    # The LLM may have slightly different word count (punctuation can
-    # attach to or detach from words), so we do best-effort alignment.
+    # Build result entries with punctuated text
     result = []
-    word_idx = 0
-
-    for entry, orig_word_count in zip(entries, entry_word_counts):
-        if orig_word_count == 0:
-            result.append(dict(entry))
-            continue
-
-        # Take the same number of words from punctuated output
-        end_idx = min(word_idx + orig_word_count, len(punctuated_words))
-        new_words = punctuated_words[word_idx:end_idx]
-        word_idx = end_idx
-
+    for entry, new_text in zip(entries, result_texts):
         new_entry = dict(entry)
-        if new_words:
-            new_entry["text"] = _nfc(" ".join(new_words))
+        new_entry["text"] = _nfc(new_text)
         result.append(new_entry)
-
     return result
 
 
