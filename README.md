@@ -240,7 +240,10 @@ All settings live in `llm_config.json` in the project directory.
 }
 ```
 
-These are inspired by professional subtitle standards. You probably don't need to change them.
+These are inspired by professional subtitle standards.
+
+> [!WARNING]
+> These defaults are tuned to work with the current pipeline logic. Changing values like `max_lines` or `max_chars_per_line` may require changes to the code — the line wrapping, entry merging, and sentence splitting logic are built around these specific values. Only modify these if you understand the impact on the processing pipeline.
 
 | Rule | Default | What it does | How it's enforced |
 |---|---|---|---|
