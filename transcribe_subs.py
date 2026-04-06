@@ -903,7 +903,9 @@ def _llm_punctuation_pass(
 
     # Use larger batches for punctuation — more context helps.
     # Overlap 20 entries between batches for cross-boundary context.
-    PUNCT_BATCH = max(batch_size, 250)
+    # Keep punctuation batches within 8K output token limit.
+    # ~20 tokens per entry output, 8000/20 = 400 max, but leave headroom.
+    PUNCT_BATCH = min(max(batch_size, 200), 300)
     OVERLAP = 20
 
     texts = [e["text"].replace("\n", " ").strip() for e in entries]
