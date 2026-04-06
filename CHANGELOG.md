@@ -47,9 +47,10 @@ First stable release. Complete rewrite of the subtitle generation pipeline based
 - Text patterns: "subscribe", "thank you for watching", "©", "transcript" etc.
 - Consecutive duplicate removal
 
-### Post-Processing (Netflix Standards)
-- 42 characters per line maximum, 2 lines per entry
-- 17 CPS target reading speed, 20 CPS hard limit
+### Post-Processing
+- 42 characters per line (soft limit — preserves words over strict limits)
+- 2 lines per entry maximum
+- 17 CPS target reading speed, 20 CPS logged as warning
 - 1-7 second display duration enforcement
 - 83ms minimum gap between entries
 - Intelligent line wrapping at natural break points with scoring:

@@ -35,7 +35,7 @@ Polished .srt file
 - Skips any video that already has subtitles (embedded or sidecar `.srt`)
 - Transcribes speech using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with the `large-v3` model
 - Fixes punctuation and misheard words via LLM (DeepSeek Chat or any OpenAI-compatible API)
-- Formats output following Netflix subtitle standards (42 chars/line, 17 CPS, 2-line max)
+- Formats output following professional subtitle standards (42 chars/line soft limit, 2-line max, readable pacing)
 
 **What it costs:**
 
@@ -240,17 +240,17 @@ All settings live in `llm_config.json` in the project directory.
 }
 ```
 
-These follow Netflix's subtitle standards. You probably don't need to change them.
+These are inspired by professional subtitle standards. You probably don't need to change them.
 
-| Rule | What it does | Netflix standard |
+| Rule | What it does | How it's enforced |
 |---|---|---|
-| `max_chars_per_line` | Maximum characters per subtitle line | 42 |
-| `max_lines` | Maximum lines per subtitle entry | 2 |
-| `target_cps` | Target reading speed (characters per second) | 17 |
-| `max_cps` | Absolute max reading speed | 20 |
-| `min_duration_ms` | Shortest a subtitle can display | 1000ms |
-| `max_duration_ms` | Longest a subtitle can display | 7000ms |
-| `min_gap_ms` | Minimum gap between consecutive subtitles | 83ms (2 frames at 24fps) |
+| `max_chars_per_line` | Preferred max characters per line | Soft limit — lines may slightly exceed to avoid dropping words |
+| `max_lines` | Maximum lines per subtitle entry | Hard limit |
+| `target_cps` | Target reading speed (characters per second) | Used for character budget calculations |
+| `max_cps` | Maximum reading speed | Logged as warning, not hard-enforced |
+| `min_duration_ms` | Shortest a subtitle can display | Extended to meet minimum when possible |
+| `max_duration_ms` | Longest a subtitle can display | Long entries split in pre-processing |
+| `min_gap_ms` | Minimum gap between consecutive subtitles | Hard-enforced (83ms = 2 frames at 24fps) |
 
 ### LLM Profiles
 
