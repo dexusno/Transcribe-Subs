@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.1.0] - 2026-04-06
+
+### Added
+- **Linux support** (Debian/Ubuntu) with bash wrappers and venv-based installer
+  - `linux/install.sh` — one-liner installer with full dependency detection
+  - `linux/transcribe_subs.sh` — bash wrapper matching PowerShell functionality
+  - Uses Python `venv` instead of conda (lighter, no extra install)
+  - Uses `apt-get` instead of `winget` for system packages
+  - Same GPU/CUDA detection, auto-fix, and model download as Windows
+- **README reorganised** — separate Windows and Linux install sections for clarity
+
+### Fixed
+- **ALL CAPS normalisation** — Whisper sometimes outputs entire sections in ALL CAPS (dramatic scenes, shouting). Now converted to lowercase before the LLM punctuation pass, which adds proper capitalisation back. Fixed 14% of entries being stuck in uppercase on test content.
+- **Hallucination filter safety** — removed text patterns that could match real dialogue ("subscribe", "thank you for watching", "music"). Only kept patterns that can never be spoken: credit lines, website names, music note symbols, copyright lines.
+- **Punctuation batch size cap** — limited to 300 entries max to stay within DeepSeek Chat's 8K output token limit. Prevents silent failures where the API returns the input unchanged.
+
+### Changed
+- Subtitle rules documentation now shows defaults in the table (not just the JSON example)
+- Added warning about modifying subtitle rule defaults — some values are baked into pipeline logic
+- LLM provider section clarified — DeepSeek is recommended/tested, others are supported alternatives
+- Local LLM warning — requires 14B+ models and high-end hardware (48GB+ VRAM) for acceptable quality
+
+---
+
 ## [1.0.0] - 2026-04-06
 
 First stable release. Complete rewrite of the subtitle generation pipeline based on extensive real-world testing.
@@ -44,7 +68,7 @@ First stable release. Complete rewrite of the subtitle generation pipeline based
 ### Hallucination Detection
 - Speaking speed check: 3+ words in under 0.5 seconds is physically impossible
 - Speed limit: over 12 words/second flagged as hallucination
-- Text patterns: "subscribe", "thank you for watching", "©", "transcript" etc.
+- Metadata patterns: credit lines, website names, music symbols, copyright lines
 - Consecutive duplicate removal
 
 ### Post-Processing
@@ -53,17 +77,12 @@ First stable release. Complete rewrite of the subtitle generation pipeline based
 - 17 CPS target reading speed, 20 CPS logged as warning
 - 1-7 second display duration enforcement
 - 83ms minimum gap between entries
-- Intelligent line wrapping at natural break points with scoring:
-  - Conjunctions and prepositions preferred
-  - After punctuation preferred
-  - Inverted pyramid (bottom line ≥ top line)
-  - Overflow penalty (soft limit, never truncates)
+- Intelligent line wrapping at natural break points with scoring
 
 ### Whisper Cache (.whisper files)
 - Raw Whisper output saved as `.whisper` file next to the video
 - If LLM fails or user aborts, Whisper doesn't need to re-run
 - Subsequent runs skip straight to LLM processing
-- Cleaned up after successful completion (configurable)
 
 ### Installer
 - One-liner: `irm https://raw.githubusercontent.com/dexusno/Transcribe-Subs/main/install.ps1 | iex`
@@ -87,8 +106,6 @@ First stable release. Complete rewrite of the subtitle generation pipeline based
 - Proper nouns remain the main challenge (Whisper limitation)
 
 ### Known Limitations
-- Proper nouns specific to a show may be misheard by Whisper (character names, place names)
-- Occasional hallucinated short phrases during silence that pass the speed/duration filters
 - Proper nouns specific to a show may be misheard by Whisper (character names, place names)
 - Occasional hallucinated short phrases during silence that pass the speed/duration filters
 
