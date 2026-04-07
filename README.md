@@ -33,7 +33,7 @@ Whisper runs **locally on your NVIDIA GPU** — no audio leaves your machine. On
 - **Fully automatic** — point at a folder, get subtitles for every video without subs
 - **Local speech-to-text** — audio never leaves your machine (Whisper on your GPU)
 - **AI-polished output** — LLM fixes punctuation, misheard words, and filler
-- **Cheap** — ~$0.06 per movie via DeepSeek API
+- **Cheap** — ~$0.06 per movie via DeepSeek API (recommended; other providers also supported)
 - **Smart filtering** — skips videos that already have subtitles (embedded or sidecar)
 - **Cross-platform** — Windows and Linux (Debian/Ubuntu) supported
 - **Netflix-style formatting** — 42 chars/line, 2-line max, proper timing and reading speed
@@ -138,9 +138,9 @@ The installer will:
 
 > If the installer installs NVIDIA drivers, you will need to **restart your computer** and run the installer again.
 
-#### Step 2: Get your DeepSeek API key
+#### Step 2: Get your LLM API key
 
-See [Configuration](#configuration) below.
+DeepSeek is recommended (see [Configuration](#configuration) below), but any OpenAI-compatible provider works.
 
 #### Step 3: Run it
 
@@ -183,9 +183,9 @@ The installer will:
 
 > If you need to install NVIDIA drivers first: `sudo apt install nvidia-driver && sudo reboot`
 
-#### Step 2: Get your DeepSeek API key
+#### Step 2: Get your LLM API key
 
-See [Configuration](#configuration) below.
+DeepSeek is recommended (see [Configuration](#configuration) below), but any OpenAI-compatible provider works.
 
 #### Step 3: Run it
 
@@ -200,11 +200,11 @@ The wrapper runs the venv Python directly — no manual activation needed.
 
 ## Configuration
 
-### Get a DeepSeek API key
+### Get an LLM API key
 
 The LLM is a required part of the pipeline — it adds punctuation to the raw transcript and fixes speech recognition errors. Without it, the output lacks sentence boundaries and is not usable as subtitles.
 
-**DeepSeek** is recommended — the pipeline is developed and tested with DeepSeek Chat. It offers the best balance of quality, speed, and cost (~$0.03 per episode):
+**DeepSeek is recommended** — the pipeline is developed and tested with DeepSeek Chat. It offers the best balance of quality, speed, and cost (~$0.03 per episode). To set up DeepSeek:
 
 1. Go to [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
 2. Create an account (or sign in)
@@ -212,7 +212,7 @@ The LLM is a required part of the pipeline — it adds punctuation to the raw tr
 4. Generate a new API key
 5. Copy the key (it starts with `sk-`)
 
-> **Other providers** (OpenAI, Groq, OpenRouter) are also supported — see [LLM Profiles](#llm-profiles). Any OpenAI-compatible API will work, though results may vary as the prompts are optimised for DeepSeek.
+> **Other providers also work** — OpenAI, Groq, OpenRouter, and any OpenAI-compatible API are supported. See [LLM Profiles](#llm-profiles) for how to configure them. Results may vary as the prompts are optimised for DeepSeek, and premium providers can cost 10-50x more.
 
 ### Add your key to .env
 
