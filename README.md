@@ -101,7 +101,7 @@ Choose your platform:
 | **Python 3.11+** | Yes | Installed by the script if missing |
 | **Git** | Yes | Installed by the script if missing |
 | **FFmpeg** | Yes | Installed by the script if missing |
-| **DeepSeek API key** | Yes | Free to create, pay-as-you-go |
+| **LLM API key** | Yes | DeepSeek recommended (pipeline is tested with it). Other OpenAI-compatible providers also work |
 
 > Both installers automatically detect and install missing dependencies.
 
