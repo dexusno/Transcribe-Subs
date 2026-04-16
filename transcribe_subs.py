@@ -1212,13 +1212,24 @@ def _enforce_timing(entries: List[dict], rules: dict) -> List[dict]:
     return entries
 
 
+# Words from the initial prompt that Whisper sometimes echoes as fake transcription.
+# Checked as substrings — if the entry contains any of these, it's prompt leakage.
+_INITIAL_PROMPT_FRAGMENTS = [
+    "i'm doing well, thank you",
+    "this is a conversation with proper punctuation",
+    "proper punctuation and capitalisation",
+    "hello, how are you",
+]
+
+
 def _remove_hallucinations(entries: List[dict]) -> List[dict]:
     """Remove entries that are likely Whisper hallucinations.
 
-    Uses three detection methods:
-    1. Text patterns — known non-dialogue text (subtitles by, ©, etc.)
-    2. Speaking speed — words that can't physically be spoken in the duration
-    3. Isolation — short generic phrases surrounded by long silence
+    Detection methods:
+    1. Text patterns — known non-dialogue metadata
+    2. Speaking speed — physically impossible speech rate
+    3. Duration check — multiple words in under 0.5 seconds
+    4. Initial prompt leakage — Whisper echoing the priming text
     """
     cleaned = []
     prev_text = None
@@ -1250,6 +1261,15 @@ def _remove_hallucinations(entries: List[dict]) -> List[dict]:
             log.debug("  Hallucination (%.3fs too short for %d words): %s",
                       duration, word_count, text[:50])
 
+        # 4. Initial prompt leakage — Whisper echoes the priming prompt as text
+        if not is_hallucination:
+            text_lower = text.lower()
+            for fragment in _INITIAL_PROMPT_FRAGMENTS:
+                if fragment in text_lower:
+                    is_hallucination = True
+                    log.debug("  Hallucination (prompt leak): %s", text[:50])
+                    break
+
         if is_hallucination:
             continue
 
@@ -1265,13 +1285,19 @@ def _remove_hallucinations(entries: List[dict]) -> List[dict]:
 
 
 def _validate_srt(entries: List[dict]) -> List[dict]:
-    """Final validation: re-index, remove empties, fix overlaps."""
+    """Final validation: re-index, remove empties, fix overlaps, clean artifacts."""
     valid = []
 
     for e in entries:
         text = e["text"].strip()
         if not text:
             continue
+
+        # Remove leaked __TAG__ placeholders that weren't restored
+        text = re.sub(r"__TAG\d+__\s*", "", text).strip()
+        if not text:
+            continue
+
         e["text"] = text
 
         # Fix overlap with previous entry
