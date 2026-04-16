@@ -818,8 +818,11 @@ def _llm_process_texts(
 
         for attempt in range(1, max_retries + 1):
             try:
-                log.info("  %s: sending batch %d/%d (%d entries) ...",
-                         pass_name, batch_num, total_batches, len(batch))
+                # Only log per-batch progress when there are multiple batches.
+                # Single-batch calls are already logged by the caller.
+                if total_batches > 1:
+                    log.info("  %s: batch %d/%d (%d entries) ...",
+                             pass_name, batch_num, total_batches, len(batch))
                 t_batch = time.time()
 
                 resp = requests.post(
@@ -828,8 +831,9 @@ def _llm_process_texts(
                 resp.raise_for_status()
                 data = resp.json()
 
-                log.info("  %s: batch %d/%d completed in %.1fs",
-                         pass_name, batch_num, total_batches, time.time() - t_batch)
+                if total_batches > 1:
+                    log.info("  %s: batch %d/%d completed in %.1fs",
+                             pass_name, batch_num, total_batches, time.time() - t_batch)
 
                 usage = data.get("usage", {})
                 for k in total_usage:
@@ -942,14 +946,18 @@ def _llm_punctuation_pass(
 
         total_chunks = math.ceil(total / PUNCT_BATCH)
         _t = f"  [{file_tag}] " if file_tag else "  "
-        log.info("%sPunctuation: batch %d/%d (entries %d-%d, +%d context)",
-                 _t, chunk_num, total_chunks, chunk_start, chunk_end - 1, real_offset)
+        log.info("%sPunctuation: batch %d/%d (%d entries, +%d context) ...",
+                 _t, chunk_num, total_chunks, chunk_end - chunk_start, real_offset)
 
+        t_punct = time.time()
         pname = f"[{file_tag}] Punctuation" if file_tag else "Punctuation"
         fixed = _llm_process_texts(
             batch_texts, system_prompt, len(batch_texts), pname,
             api_url=api_url, model=model, api_key=api_key, api_timeout=api_timeout,
         )
+
+        log.info("%sPunctuation: batch %d/%d completed in %.1fs",
+                 _t, chunk_num, total_chunks, time.time() - t_punct)
 
         # Only use results from the non-overlap portion
         for i in range(real_offset, len(fixed)):
