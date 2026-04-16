@@ -1152,9 +1152,10 @@ def _enforce_timing(entries: List[dict], rules: dict) -> List[dict]:
     target_cps = rules["target_cps"]
 
     # Comfortable reading speed: more relaxed than target CPS.
-    # At target_cps=17, comfortable_cps ≈ 13.6 (80% of target).
-    # This gives viewers breathing room to read without rushing.
-    comfortable_cps = target_cps * 0.8
+    # At target_cps=17, comfortable_cps ≈ 11 (65% of target).
+    # This gives viewers plenty of time to read without rushing.
+    # Only extends into available gap — never overlaps next entry.
+    comfortable_cps = target_cps * 0.65
 
     for i, e in enumerate(entries):
         text_len = len(e["text"].replace("\n", ""))
