@@ -743,6 +743,17 @@ def _split_sentence_into_entries(
     if best_idx is None:
         best_idx = len(words) // 2
 
+    # Safety: if we can't split further (single word or split at 0),
+    # just add the entry as-is even if it's oversized. This prevents
+    # infinite recursion on unsplittable content.
+    if best_idx <= 0 or best_idx >= len(words):
+        result.append({
+            "start_sec": words[0]["start"],
+            "end_sec": words[-1]["end"],
+            "text": full_text,
+        })
+        return
+
     # Recurse on each half
     _split_sentence_into_entries(words[:best_idx], result, max_chars, max_dur)
     _split_sentence_into_entries(words[best_idx:], result, max_chars, max_dur)
