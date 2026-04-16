@@ -876,6 +876,7 @@ def _llm_punctuation_pass(
     model: str,
     api_key: str,
     api_timeout: int = 120,
+    file_tag: str = "",
 ) -> List[dict]:
     """LLM Pass 1: Add proper punctuation and capitalisation.
 
@@ -940,11 +941,13 @@ def _llm_punctuation_pass(
         real_offset = chunk_start - context_start
 
         total_chunks = math.ceil(total / PUNCT_BATCH)
-        log.info("  Punctuation: batch %d/%d (entries %d-%d, +%d context) ...",
-                 chunk_num, total_chunks, chunk_start, chunk_end - 1, real_offset)
+        _t = f"  [{file_tag}] " if file_tag else "  "
+        log.info("%sPunctuation: batch %d/%d (entries %d-%d, +%d context)",
+                 _t, chunk_num, total_chunks, chunk_start, chunk_end - 1, real_offset)
 
+        pname = f"[{file_tag}] Punctuation" if file_tag else "Punctuation"
         fixed = _llm_process_texts(
-            batch_texts, system_prompt, len(batch_texts), f"Punctuation",
+            batch_texts, system_prompt, len(batch_texts), pname,
             api_url=api_url, model=model, api_key=api_key, api_timeout=api_timeout,
         )
 
@@ -973,6 +976,7 @@ def _llm_cleanup_pass(
     model: str,
     api_key: str,
     api_timeout: int = 120,
+    file_tag: str = "",
 ) -> List[dict]:
     """LLM Pass 2: Fix misheard words, remove filler.
 
@@ -1015,8 +1019,9 @@ def _llm_cleanup_pass(
         texts.append(text)
         tag_maps.append(tags)
 
+    cname = f"[{file_tag}] Cleanup" if file_tag else "Cleanup"
     fixed = _llm_process_texts(
-        texts, system_prompt, batch_size, "Cleanup",
+        texts, system_prompt, batch_size, cname,
         api_url=api_url, model=model, api_key=api_key, api_timeout=api_timeout,
     )
 
@@ -1457,6 +1462,7 @@ def _transcribe_video(
     whisper_model: WhisperModel,
     whisper_config: dict,
     language_override: str | None = None,
+    file_tag: str = "",
 ) -> Tuple[str, str]:
     """Transcribe a video file to raw SRT.
 
@@ -1470,11 +1476,12 @@ def _transcribe_video(
     try:
         # Get video duration for progress percentage
         total_duration = _get_media_duration(video_path)
+        _t = f"  [{file_tag}] " if file_tag else "  "
         if total_duration:
             dur_display = _seconds_to_srt_time(total_duration).rsplit(",", 1)[0]
-            log.info("  Video duration: %s", dur_display)
+            log.info("%sVideo duration: %s", _t, dur_display)
 
-        log.info("  Extracting audio ...")
+        log.info("%sExtracting audio ...", _t)
         if not _extract_audio(video_path, wav_path):
             raise RuntimeError(f"Failed to extract audio from {video_path}")
 
@@ -1495,8 +1502,8 @@ def _transcribe_video(
             "This is a conversation with proper punctuation and capitalisation."
         )
 
-        log.info("  Transcribing with Whisper (lang=%s, beam=%d, best_of=%d) ...",
-                 lang or "auto", beam_size, best_of)
+        log.info("%sTranscribing with Whisper (lang=%s, beam=%d, best_of=%d) ...",
+                 _t, lang or "auto", beam_size, best_of)
         t0 = time.time()
 
         with _whisper_lock:
@@ -1523,16 +1530,17 @@ def _transcribe_video(
                     elapsed_so_far = time.time() - t0
                     if total_duration and total_duration > 0:
                         pct = min(99, int(seg.end / total_duration * 100))
-                        log.info("  Whisper: %d segments, at %s / %s (%d%%)",
-                                 len(segment_list), pos, dur_display, pct)
+                        log.info("%sWhisper: %d segments, at %s / %s (%d%%)",
+                                 _t, len(segment_list), pos, dur_display, pct)
                     else:
-                        log.info("  Whisper: %d segments, at %s (%.0fs elapsed)",
-                                 len(segment_list), pos, elapsed_so_far)
+                        log.info("%sWhisper: %d segments, at %s (%.0fs elapsed)",
+                                 _t, len(segment_list), pos, elapsed_so_far)
                     last_log = len(segment_list)
 
         elapsed = time.time() - t0
         detected_lang = info.language or "unknown"
-        log.info("  Whisper done: %d segments, language=%s, %.1f seconds",
+        log.info("%sWhisper done: %d segments, language=%s, %.1f seconds",
+                 _t,
                  len(segment_list), detected_lang, elapsed)
 
         raw_srt = _build_raw_srt(segment_list)
@@ -1721,6 +1729,10 @@ def _transcribe_one(
     rel = job["rel"]
     t0 = time.time()
 
+    # Short tag for log lines so interleaved output is identifiable.
+    # Truncate to 15 chars max: "Knight", "S01E03 - Prior", "Inception"
+    tag = video_path.stem[:15]
+
     try:
         file_num = job.get("file_num", "?")
         file_total = job.get("file_total", "?")
@@ -1731,17 +1743,17 @@ def _transcribe_one(
 
         # ── Pass 1: Whisper transcription (or reuse cached raw) ──────────
         if raw_srt_path.exists() and raw_srt_path.stat().st_size > 0:
-            log.info("  [Pass 1/4] Reusing cached Whisper output: %s", raw_srt_path.name)
+            log.info("  [%s] Reusing cached Whisper output", tag)
             raw_srt = raw_srt_path.read_text(encoding="utf-8").lstrip("\ufeff")
             detected_lang = "cached"
         else:
-            log.info("  [Pass 1/4] Whisper transcription")
+            log.info("  [%s] Pass 1: Whisper transcription", tag)
             raw_srt, detected_lang = _transcribe_video(
-                video_path, whisper_model, whisper_config, language_override
+                video_path, whisper_model, whisper_config, language_override, tag
             )
 
         if not raw_srt.strip():
-            log.warning("  [EMPTY] No speech detected: %s", rel)
+            log.warning("  [%s] EMPTY — no speech detected", tag)
             with _stats_lock:
                 stats["empty"] += 1
             return
@@ -1753,7 +1765,7 @@ def _transcribe_one(
         # If --skip-llm, we're done — the .whisper IS the output
         if skip_llm:
             elapsed = time.time() - t0
-            log.info("  [OK-RAW] %s (%.1fs, lang=%s)", rel, elapsed, detected_lang)
+            log.info("  [%s] OK-RAW (%.1fs, lang=%s)", tag, elapsed, detected_lang)
             with _stats_lock:
                 stats["transcribed"] += 1
             return
@@ -1762,14 +1774,12 @@ def _transcribe_one(
         entries = _parse_srt_entries(raw_srt)
 
         # Normalise ALL CAPS entries to lowercase before LLM sees them.
-        # Whisper sometimes outputs entire sections in ALL CAPS.
-        # The LLM punctuation pass will add proper capitalisation back.
         for e in entries:
             text = e["text"]
             if text == text.upper() and len(text) > 3:
                 e["text"] = text.lower()
 
-        log.info("  [Pass 2/5] LLM punctuation: %d entries ...", len(entries))
+        log.info("  [%s] Pass 2: LLM punctuation (%d entries)", tag, len(entries))
 
         try:
             entries = _llm_punctuation_pass(
@@ -1779,17 +1789,18 @@ def _transcribe_one(
                 model=profile["model"],
                 api_key=profile["api_key"],
                 api_timeout=profile["timeout"],
+                file_tag=tag,
             )
         except Exception as exc:
-            log.warning("  Punctuation pass failed: %s — continuing with raw text", exc)
+            log.warning("  [%s] Punctuation failed: %s — using raw text", tag, exc)
 
         # ── Pass 3: Sentence re-segmentation ────────────────────────────
-        log.info("  [Pass 3/5] Re-segmenting at sentence boundaries ...")
+        log.info("  [%s] Pass 3: Re-segmenting at sentence boundaries", tag)
         entries = _resegment_by_sentences(entries, rules)
-        log.info("  After re-segmentation: %d entries", len(entries))
+        log.info("  [%s] After re-segmentation: %d entries", tag, len(entries))
 
         # ── Pass 4: LLM cleanup ─────────────────────────────────────────
-        log.info("  [Pass 4/5] LLM cleanup: fixing misheard words, filler ...")
+        log.info("  [%s] Pass 4: LLM cleanup (misheard words, filler)", tag)
 
         try:
             entries = _llm_cleanup_pass(
@@ -1799,12 +1810,13 @@ def _transcribe_one(
                 model=profile["model"],
                 api_key=profile["api_key"],
                 api_timeout=profile["timeout"],
+                file_tag=tag,
             )
         except Exception as exc:
-            log.warning("  LLM cleanup failed: %s — continuing with punctuated text", exc)
+            log.warning("  [%s] Cleanup failed: %s — using punctuated text", tag, exc)
 
         # ── Pass 5: Post-process ─────────────────────────────────────────
-        log.info("  [Pass 5/5] Post-processing (timing, line wrapping, validation)")
+        log.info("  [%s] Pass 5: Post-processing", tag)
         entries = _postprocess(entries, rules)
 
         # ── Write output ─────────────────────────────────────────────────
@@ -1816,8 +1828,8 @@ def _transcribe_one(
         # TODO: delete .whisper after beta testing is complete
 
         elapsed = time.time() - t0
-        log.info("  [OK] %s (%d entries, %.1fs, lang=%s)",
-                 rel, len(entries), elapsed, detected_lang)
+        log.info("  [%s] OK (%d entries, %.1fs, lang=%s)",
+                 tag, len(entries), elapsed, detected_lang)
 
         with _stats_lock:
             stats["transcribed"] += 1
