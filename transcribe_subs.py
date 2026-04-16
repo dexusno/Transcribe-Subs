@@ -1824,9 +1824,12 @@ def _transcribe_one(
         srt_text = _entries_to_srt(entries)
         output_path.write_text(srt_text, encoding="utf-8")
 
-        # Keep .whisper cache file for now — useful for comparing
-        # raw Whisper output vs LLM-cleaned output during testing.
-        # TODO: delete .whisper after beta testing is complete
+        # Clean up .whisper cache — polished .srt is the final output
+        try:
+            if raw_srt_path.exists():
+                raw_srt_path.unlink()
+        except OSError:
+            pass
 
         elapsed = time.time() - t0
         log.info("  [%s] OK (%d entries, %.1fs, lang=%s)",
