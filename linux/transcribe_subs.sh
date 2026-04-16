@@ -57,7 +57,7 @@ for arg in "$@"; do
             PY_ARGS+=("$arg")
             SKIP_NEXT=true
             ;;
-        --force|--dry-run|--skip-llm)
+        --force|--dry-run|--skip-llm|--keep-whisper)
             PY_ARGS+=("$arg")
             ;;
         *)

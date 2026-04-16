@@ -1723,6 +1723,7 @@ def _transcribe_one(
     batch_size: int,
     profile: dict,
     skip_llm: bool,
+    keep_whisper: bool,
     stats: dict,
 ) -> None:
     """Worker: transcribe a single video file through the full pipeline."""
@@ -1824,12 +1825,13 @@ def _transcribe_one(
         srt_text = _entries_to_srt(entries)
         output_path.write_text(srt_text, encoding="utf-8")
 
-        # Clean up .whisper cache — polished .srt is the final output
-        try:
-            if raw_srt_path.exists():
-                raw_srt_path.unlink()
-        except OSError:
-            pass
+        # Clean up .whisper cache unless --keep-whisper
+        if not keep_whisper:
+            try:
+                if raw_srt_path.exists():
+                    raw_srt_path.unlink()
+            except OSError:
+                pass
 
         elapsed = time.time() - t0
         log.info("  [%s] OK (%d entries, %.1fs, lang=%s)",
@@ -1856,6 +1858,7 @@ def scan_and_transcribe(
     profile: dict,
     parallel: int,
     skip_llm: bool,
+    keep_whisper: bool,
     dry_run: bool,
     force: bool,
     limit: int = 0,
@@ -1911,7 +1914,7 @@ def scan_and_transcribe(
             future = pool.submit(
                 _transcribe_one,
                 job, whisper_model, whisper_config, language_override,
-                rules, batch_size, profile, skip_llm, stats,
+                rules, batch_size, profile, skip_llm, keep_whisper, stats,
             )
             futures[future] = job
 
@@ -1965,7 +1968,9 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be processed, no actual work")
     parser.add_argument("--skip-llm", action="store_true",
-                        help="Output raw Whisper .srt without LLM cleanup")
+                        help="Output raw Whisper .whisper without LLM cleanup")
+    parser.add_argument("--keep-whisper", action="store_true",
+                        help="Keep the raw .whisper cache file after processing")
     parser.add_argument("--log-file", type=str, default=None,
                         help="Also log to this file")
 
@@ -2045,6 +2050,7 @@ def main():
         profile=profile,
         parallel=parallel,
         skip_llm=args.skip_llm,
+        keep_whisper=args.keep_whisper,
         dry_run=args.dry_run,
         force=args.force,
         limit=args.limit,

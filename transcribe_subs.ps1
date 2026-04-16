@@ -46,6 +46,9 @@ param(
     [switch]$SkipLLM,
 
     [Parameter(Mandatory = $false)]
+    [switch]$KeepWhisper,
+
+    [Parameter(Mandatory = $false)]
     [string]$LogFile = ""
 )
 
@@ -171,6 +174,7 @@ if ($Limit -gt 0)          { $pyArgs += @("--limit", $Limit) }
 if ($Force)                { $pyArgs += "--force" }
 if ($DryRun)               { $pyArgs += "--dry-run" }
 if ($SkipLLM)              { $pyArgs += "--skip-llm" }
+if ($KeepWhisper)          { $pyArgs += "--keep-whisper" }
 if ($LogFile -ne "")       { $pyArgs += @("--log-file", $LogFile) }
 
 $pyArgs += $ResolvedFolder
