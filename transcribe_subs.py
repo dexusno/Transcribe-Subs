@@ -1653,11 +1653,34 @@ def _has_any_subtitles(video_path: Path, cache: Optional["DirCache"] = None) -> 
 
 
 def _find_existing_output(video_path: Path, cache: Optional["DirCache"] = None) -> Optional[Path]:
-    """Check if our output .srt already exists for this video."""
-    output = video_path.with_suffix(".srt")
+    """Check if our output .srt already exists for this video.
+
+    Checks both Movie.srt and Movie.XX.srt (language-tagged).
+    """
+    stem = video_path.stem
+    parent = video_path.parent
+
+    # Check Movie.srt (legacy, no language tag)
+    plain = parent / f"{stem}.srt"
     if cache:
-        return output if cache.exists(output) else None
-    return output if output.exists() else None
+        if cache.exists(plain):
+            return plain
+    else:
+        if plain.exists():
+            return plain
+
+    # Check Movie.XX.srt (language-tagged, e.g. Movie.en.srt)
+    if cache:
+        for child in cache.children(parent):
+            if (child.name.startswith(stem + ".")
+                    and child.suffix == ".srt"
+                    and child.name != f"{stem}.srt"):
+                return child
+    else:
+        for f in parent.glob(f"{stem}.*.srt"):
+            return f
+
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1801,6 +1824,13 @@ def _transcribe_one(
         # Save raw Whisper output as .whisper (always — it's the honest label)
         if not raw_srt_path.exists():
             raw_srt_path.write_text("\ufeff" + raw_srt, encoding="utf-8")
+
+        # Build output path with language tag (e.g. Movie.en.srt)
+        lang_code = language_override or (detected_lang if detected_lang != "cached" else None)
+        if lang_code and lang_code != "unknown":
+            output_path = video_path.with_suffix(f".{lang_code}.srt")
+        else:
+            output_path = video_path.with_suffix(".srt")
 
         # If --skip-llm, we're done — the .whisper IS the output
         if skip_llm:
