@@ -1114,39 +1114,71 @@ def _wrap_lines(text: str, rules: dict) -> str:
 
 
 def _enforce_timing(entries: List[dict], rules: dict) -> List[dict]:
-    """Enforce timing rules: min/max duration, min gap, CPS check."""
+    """Enforce timing rules: extend to comfortable duration, cap, enforce gap.
+
+    Subtitles that disappear just as the viewer starts reading are jarring.
+    This function extends each entry to a comfortable reading duration,
+    using any available dead air before the next subtitle, while:
+      - Never overlapping the next entry (respects min_gap)
+      - Never exceeding max_duration (doesn't linger forever)
+      - Never shrinking entries that are already long enough
+    """
     min_dur = rules["min_duration_ms"] / 1000.0
     max_dur = rules["max_duration_ms"] / 1000.0
     min_gap = rules["min_gap_ms"] / 1000.0
     max_cps = rules["max_cps"]
+    target_cps = rules["target_cps"]
+
+    # Comfortable reading speed: more relaxed than target CPS.
+    # At target_cps=17, comfortable_cps ≈ 13.6 (80% of target).
+    # This gives viewers breathing room to read without rushing.
+    comfortable_cps = target_cps * 0.8
 
     for i, e in enumerate(entries):
-        duration = e["end_sec"] - e["start_sec"]
+        text_len = len(e["text"].replace("\n", ""))
 
-        # Min duration: extend end if too short
-        if duration < min_dur:
-            max_end = entries[i + 1]["start_sec"] - min_gap if i + 1 < len(entries) else e["start_sec"] + min_dur
-            e["end_sec"] = min(e["start_sec"] + min_dur, max_end)
-            e["end_ts"] = _seconds_to_srt_time(e["end_sec"])
+        # Target duration for comfortable reading:
+        #  - At least 1.5 seconds (avoids flashing)
+        #  - Or text_length / comfortable_cps (whichever is longer)
+        #  - Capped at max_duration
+        comfortable_dur = max(1.5, text_len / comfortable_cps)
+        comfortable_dur = min(comfortable_dur, max_dur)
+        target_end = e["start_sec"] + comfortable_dur
 
-        # Max duration: cap
-        duration = e["end_sec"] - e["start_sec"]
-        if duration > max_dur:
+        # How far we CAN extend (respecting next entry + min_gap)
+        if i + 1 < len(entries):
+            max_allowed_end = entries[i + 1]["start_sec"] - min_gap
+        else:
+            max_allowed_end = e["start_sec"] + max_dur
+
+        # Extend toward comfortable duration, but don't overshoot allowed end
+        new_end = min(target_end, max_allowed_end)
+
+        # Only extend — never shrink via this rule
+        if new_end > e["end_sec"]:
+            e["end_sec"] = new_end
+
+        # Cap at max_duration
+        if e["end_sec"] - e["start_sec"] > max_dur:
             e["end_sec"] = e["start_sec"] + max_dur
-            e["end_ts"] = _seconds_to_srt_time(e["end_sec"])
 
-        # Min gap to next entry
+        # Enforce min_gap to next entry (never overlap)
         if i + 1 < len(entries):
             gap = entries[i + 1]["start_sec"] - e["end_sec"]
             if gap < min_gap:
                 e["end_sec"] = entries[i + 1]["start_sec"] - min_gap
                 if e["end_sec"] <= e["start_sec"]:
                     e["end_sec"] = e["start_sec"] + 0.1  # Safety floor
-                e["end_ts"] = _seconds_to_srt_time(e["end_sec"])
+
+        # Enforce absolute minimum duration (rare case when comfortable < min_dur)
+        if e["end_sec"] - e["start_sec"] < min_dur:
+            max_end = entries[i + 1]["start_sec"] - min_gap if i + 1 < len(entries) else e["start_sec"] + min_dur
+            e["end_sec"] = min(e["start_sec"] + min_dur, max_end)
+
+        e["end_ts"] = _seconds_to_srt_time(e["end_sec"])
 
         # CPS warning (text was already condensed by LLM; just log)
         duration = max(0.1, e["end_sec"] - e["start_sec"])
-        text_len = len(e["text"].replace("\n", ""))
         cps = text_len / duration
         if cps > max_cps:
             log.debug("  CPS warning: entry %d has %.1f CPS (max %d): %s",

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.0] - 2026-04-06
+
+### Fixed
+- **Subtitles disappearing too quickly** — subs that ended well before the next line started were wasting available "dead air" time. Now each subtitle is extended to a comfortable reading duration (at least 1.5s, or `text_length / (target_cps * 0.8)`), using any available gap before the next subtitle. Respects `max_duration` and `min_gap` — never overlaps the next entry, never lingers past 7 seconds. Affected ~18% of entries on test content.
+
+### Changed
+- `_enforce_timing` logic rewritten — the previous "extend to 1 second minimum" rule is now "extend to comfortable reading time", fully utilising gap space for readability.
+
+---
+
 ## [1.1.0] - 2026-04-06
 
 ### Added
