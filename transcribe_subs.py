@@ -1730,11 +1730,7 @@ def _transcribe_one(
     t0 = time.time()
 
     # Tag for log lines so interleaved output is identifiable.
-    # Use last segment after " - " if present (episode/movie name),
-    # otherwise use the full stem.
-    stem = video_path.stem
-    parts = stem.split(" - ")
-    tag = parts[-1] if len(parts) > 1 else stem
+    tag = video_path.stem
 
     try:
         file_num = job.get("file_num", "?")
