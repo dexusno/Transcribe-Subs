@@ -1213,16 +1213,18 @@ def _enforce_timing(entries: List[dict], rules: dict) -> List[dict]:
 
 
 # Phrases that Whisper hallucinates from its training data or our initial prompt.
-# Checked as substrings — if the entry text matches any of these, it's removed.
-# Only includes phrases that are NEVER real dialogue in any context.
-_WHISPER_HALLUCINATION_PHRASES = [
-    # Initial prompt leakage
+# Initial prompt fragments checked as substrings (partial echoes possible).
+# Training data artifacts checked as exact matches only.
+_PROMPT_LEAK_FRAGMENTS = [
     "i'm doing well, thank you",
     "this is a conversation with proper punctuation",
     "proper punctuation and capitalisation",
     "hello, how are you",
-    # Whisper training data artifacts (YouTube ad breaks)
+]
+
+_WHISPER_HALLUCINATION_EXACT = [
     "we'll be right back",
+    "we'll be right back.",
 ]
 
 
@@ -1265,14 +1267,20 @@ def _remove_hallucinations(entries: List[dict]) -> List[dict]:
             log.debug("  Hallucination (%.3fs too short for %d words): %s",
                       duration, word_count, text[:50])
 
-        # 4. Known Whisper hallucination phrases (prompt leaks + training artifacts)
+        # 4. Initial prompt leakage (substring match — partial echoes possible)
         if not is_hallucination:
             text_lower = text.lower()
-            for fragment in _WHISPER_HALLUCINATION_PHRASES:
+            for fragment in _PROMPT_LEAK_FRAGMENTS:
                 if fragment in text_lower:
                     is_hallucination = True
-                    log.debug("  Hallucination (known phrase): %s", text[:50])
+                    log.debug("  Hallucination (prompt leak): %s", text[:50])
                     break
+
+        # 5. Known Whisper training data hallucinations (exact match only)
+        if not is_hallucination:
+            if text_lower in _WHISPER_HALLUCINATION_EXACT:
+                is_hallucination = True
+                log.debug("  Hallucination (exact match): %s", text[:50])
 
         if is_hallucination:
             continue
