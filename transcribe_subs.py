@@ -1212,13 +1212,17 @@ def _enforce_timing(entries: List[dict], rules: dict) -> List[dict]:
     return entries
 
 
-# Words from the initial prompt that Whisper sometimes echoes as fake transcription.
-# Checked as substrings — if the entry contains any of these, it's prompt leakage.
-_INITIAL_PROMPT_FRAGMENTS = [
+# Phrases that Whisper hallucinates from its training data or our initial prompt.
+# Checked as substrings — if the entry text matches any of these, it's removed.
+# Only includes phrases that are NEVER real dialogue in any context.
+_WHISPER_HALLUCINATION_PHRASES = [
+    # Initial prompt leakage
     "i'm doing well, thank you",
     "this is a conversation with proper punctuation",
     "proper punctuation and capitalisation",
     "hello, how are you",
+    # Whisper training data artifacts (YouTube ad breaks)
+    "we'll be right back",
 ]
 
 
@@ -1261,13 +1265,13 @@ def _remove_hallucinations(entries: List[dict]) -> List[dict]:
             log.debug("  Hallucination (%.3fs too short for %d words): %s",
                       duration, word_count, text[:50])
 
-        # 4. Initial prompt leakage — Whisper echoes the priming prompt as text
+        # 4. Known Whisper hallucination phrases (prompt leaks + training artifacts)
         if not is_hallucination:
             text_lower = text.lower()
-            for fragment in _INITIAL_PROMPT_FRAGMENTS:
+            for fragment in _WHISPER_HALLUCINATION_PHRASES:
                 if fragment in text_lower:
                     is_hallucination = True
-                    log.debug("  Hallucination (prompt leak): %s", text[:50])
+                    log.debug("  Hallucination (known phrase): %s", text[:50])
                     break
 
         if is_hallucination:
