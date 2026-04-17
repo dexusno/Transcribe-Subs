@@ -5,7 +5,7 @@
 ### Added
 - **Language-tagged output** — output files now include the language code (e.g. `Movie.en.srt` instead of `Movie.srt`). Auto-detected by Whisper or set via `-Language`. Plex, Jellyfin, and Kodi auto-detect language from this naming convention.
 - **`--keep-whisper` flag** — optionally preserve the raw `.whisper` cache file after successful processing. Useful for debugging or inspecting raw Whisper output.
-- **Filename tags in log output** — when processing multiple files in parallel, every log line now includes the filename so interleaved output is identifiable (e.g. `[Knight] Whisper: 200 segments, at 00:13:10 (29%)`).
+- **Filename tags in log output** — when processing multiple files in parallel, every log line now includes the filename so interleaved output is identifiable (e.g. `[<filename>] Whisper: 200 segments, at 00:13:10 (29%)`).
 
 ### Fixed
 - **Infinite recursion crash** — `_split_sentence_into_entries` could crash with "maximum recursion depth exceeded" on certain content where sentences couldn't be split further. Now detects unsplittable content and adds the entry as-is. Previously crashed 2 out of 8 episodes in batch processing.
