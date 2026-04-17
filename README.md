@@ -300,17 +300,20 @@ Save the file. That's all the configuration needed to start using the tool.
 | `-Force` | `--force` | Re-transcribe even if `.srt` exists | off |
 | `-DryRun` | `--dry-run` | Show what would be processed | off |
 | `-SkipLLM` | `--skip-llm` | Output raw Whisper without LLM cleanup | off |
+| `-KeepWhisper` | `--keep-whisper` | Keep the raw `.whisper` cache file after processing | off |
 | `-LogFile` | `--log-file` | Also write log output to this file | none |
 
 ### Output
 
-For each video without subtitles, the tool creates a `.srt` file next to it:
+For each video without subtitles, the tool creates a language-tagged `.srt` file next to it:
 
 ```
 Movies/Inception (2010)/
     Inception.mkv
-    Inception.srt          ← generated
+    Inception.en.srt       ← generated (language auto-detected or from -Language flag)
 ```
+
+The language code (e.g. `.en`, `.fr`, `.de`) is detected automatically by Whisper or set manually with `-Language`. Media servers like Plex, Jellyfin, and Kodi recognise this naming convention and display the correct language label.
 
 The `.srt` file:
 - Uses UTF-8 encoding with BOM for maximum player compatibility
