@@ -37,7 +37,7 @@
     },
     "openai": {
       "api_url": "https://api.openai.com/v1/chat/completions",
-      "model": "gpt-4o",
+      "model": "gpt-5.4",
       "api_key_env": "OPENAI_API_KEY",
       "batch_size": 150,
       "parallel": 4,

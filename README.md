@@ -83,7 +83,7 @@ Polished .srt file
 | LLM processing — 10-episode season | ~$0.30 |
 
 > [!NOTE]
-> These estimates are based on **DeepSeek Chat pricing as of April 2026** (the default and recommended provider). Pricing may change over time. Costs will also vary if you use a different provider or model — OpenAI GPT-4o, Anthropic Claude, and other premium models can cost 10-50x more. DeepSeek Chat offers the best cost/quality balance for this task. Always check your provider's current pricing before processing large libraries.
+> These estimates are based on **DeepSeek Chat pricing as of April 2026** (the default and recommended provider). Pricing may change over time. Costs will also vary if you use a different provider or model — OpenAI, Anthropic Claude, and other premium models can cost significantly more. DeepSeek Chat offers the best cost/quality balance for this task. Always check your provider's current pricing before processing large libraries.
 
 > The `--skip-llm` flag exists for testing but is **not recommended** — raw Whisper output lacks proper punctuation and sentence boundaries, making it difficult to read as subtitles. The LLM passes are essential for usable output.
 
