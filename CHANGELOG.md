@@ -1,9 +1,30 @@
 # Changelog
 
+## [1.3.0] - 2026-04-17
+
+### Added
+- **Language-tagged output** — output files now include the language code (e.g. `Movie.en.srt` instead of `Movie.srt`). Auto-detected by Whisper or set via `-Language`. Plex, Jellyfin, and Kodi auto-detect language from this naming convention.
+- **`--keep-whisper` flag** — optionally preserve the raw `.whisper` cache file after successful processing. Useful for debugging or inspecting raw Whisper output.
+- **Filename tags in log output** — when processing multiple files in parallel, every log line now includes the filename so interleaved output is identifiable (e.g. `[Knight] Whisper: 200 segments, at 00:13:10 (29%)`).
+
+### Fixed
+- **Infinite recursion crash** — `_split_sentence_into_entries` could crash with "maximum recursion depth exceeded" on certain content where sentences couldn't be split further. Now detects unsplittable content and adds the entry as-is. Previously crashed 2 out of 8 episodes in batch processing.
+- **Initial prompt leakage** — Whisper sometimes echoed the priming text ("I'm doing well, thank you") as the first transcribed segment. Now detected and removed.
+- **`__TAG__` placeholder leak** — HTML tags in Whisper output (`<i>`, `<b>`) were turned into `__TAG0__` placeholders during LLM cleanup but sometimes weren't restored. Now stripped in validation as a safety net.
+- **"We'll be right back" hallucination** — consistent Whisper training data artifact that appeared across unrelated content. Now filtered by exact match.
+
+### Changed
+- **Subtitle display duration** — comfortable reading speed relaxed from 80% to 65% of target CPS (~11 CPS at target=17), giving approximately 25% more reading time per subtitle.
+- **LLM cleanup prompt** — reverted to conservative approach ("if unsure, leave it alone") after testing showed aggressive prompts caused half-fixes worse than the original errors. Misheard word correction works better with simple, clear instructions.
+- **`.whisper` cache cleanup** — files are now deleted after successful `.srt` generation by default (was kept during beta testing). Use `--keep-whisper` to preserve.
+- **Hallucination filter** — removed text patterns that could match real dialogue ("subscribe", "thank you for watching"). Now only filters metadata patterns and exact-match training artifacts.
+
+---
+
 ## [1.2.0] - 2026-04-06
 
 ### Fixed
-- **Subtitles disappearing too quickly** — subs that ended well before the next line started were wasting available "dead air" time. Now each subtitle is extended to a comfortable reading duration (at least 1.5s, or `text_length / (target_cps * 0.8)`), using any available gap before the next subtitle. Respects `max_duration` and `min_gap` — never overlaps the next entry, never lingers past 7 seconds. Affected ~18% of entries on test content.
+- **Subtitles disappearing too quickly** — subs that ended well before the next line started were wasting available "dead air" time. Now each subtitle is extended to a comfortable reading duration (at least 1.5s, or `text_length / (target_cps * 0.65)`), using any available gap before the next subtitle. Respects `max_duration` and `min_gap` — never overlaps the next entry, never lingers past 7 seconds. Affected ~18% of entries on test content.
 
 ### Changed
 - `_enforce_timing` logic rewritten — the previous "extend to 1 second minimum" rule is now "extend to comfortable reading time", fully utilising gap space for readability.
