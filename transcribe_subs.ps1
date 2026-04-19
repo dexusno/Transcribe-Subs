@@ -183,7 +183,7 @@ $pyArgs += $ResolvedFolder
 
 $ProfileDisplay = if ($Profile -ne "") { $Profile } else { "(config default)" }
 $ModelDisplay   = if ($WhisperModel -ne "") { $WhisperModel } else { "(config default)" }
-$LangDisplay    = if ($Language -ne "") { $Language } else { "auto-detect" }
+$LangDisplay    = if ($Language -ne "") { $Language } else { "(config default)" }
 
 Write-Host ""
 Write-Host "  ---------------------------------------------------" -ForegroundColor DarkGray

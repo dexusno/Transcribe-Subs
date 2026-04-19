@@ -2092,7 +2092,8 @@ def main():
     log.info("  Whisper model: %s (device=%s, compute=%s)",
              whisper_config["model"], whisper_config["device"],
              whisper_config["compute_type"])
-    log.info("  Language:      %s", args.language or "auto-detect")
+    effective_lang = args.language or whisper_config.get("language") or "auto-detect"
+    log.info("  Language:      %s", effective_lang)
     log.info("  LLM profile:   %s (%s)", profile["name"], profile["model"])
     log.info("  Batch size:    %d", batch_size)
     log.info("  Parallel:      %d", parallel)
