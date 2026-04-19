@@ -3,7 +3,7 @@
     "model": "large-v3",
     "device": "cuda",
     "compute_type": "int8",
-    "language": null,
+    "language": "en",
     "beam_size": 10,
     "best_of": 5,
     "patience": 2.0,

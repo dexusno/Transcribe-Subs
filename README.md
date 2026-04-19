@@ -295,7 +295,7 @@ Save the file. That's all the configuration needed to start using the tool.
 | `-BatchSize` | `--batch-size` | Subtitle entries per LLM API call | 150 |
 | `-Parallel` | `--parallel` | Concurrent file processing threads | 4 |
 | `-WhisperModel` | `--whisper-model` | Override Whisper model size | `large-v3` |
-| `-Language` | `--language` | Force language code (e.g. `en`, `es`) | auto-detect |
+| `-Language` | `--language` | Language code (e.g. `en`, `es`, `fr`) | `en` |
 | `-Limit` | `--limit` | Max number of files to process | unlimited |
 | `-Force` | `--force` | Re-transcribe even if `.srt` exists | off |
 | `-DryRun` | `--dry-run` | Show what would be processed | off |
@@ -333,7 +333,7 @@ All settings live in `llm_config.json` in the project directory.
     "model": "large-v3",
     "device": "cuda",
     "compute_type": "int8",
-    "language": null,
+    "language": "en",
     "beam_size": 10,
     "best_of": 5,
     "patience": 2.0,
@@ -348,7 +348,7 @@ All settings live in `llm_config.json` in the project directory.
 | `model` | Whisper model size | `tiny`, `base`, `small`, `medium`, `large-v2`, `large-v3` |
 | `device` | Run on GPU or CPU | `cuda`, `cpu` |
 | `compute_type` | Precision (lower = faster, less VRAM) | `int8`, `float16`, `float32` |
-| `language` | Force language or auto-detect | `null` (auto), `"en"`, `"es"`, `"fr"`, etc. |
+| `language` | Language for transcription | `"en"` (default), `"es"`, `"fr"`, `null` (auto-detect) |
 | `beam_size` | Beam search width (higher = more accurate) | `1`-`15` |
 | `best_of` | Candidates per segment (picks the best) | `1`-`5` |
 | `patience` | Beam search patience | `1.0`-`3.0` |
